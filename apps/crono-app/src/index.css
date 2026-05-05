@@ -1,0 +1,27 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: #16181E;
+  background: #F6F8FB;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #F0F2F5; }
+::-webkit-scrollbar-thumb { background: #C5D2E2; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #2D7BF3; }
+
+input[type=date]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .55; }
+input[type=date]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px) scale(.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes btn-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(45,123,243,0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(45,123,243,0); }
+}
+.btn-pulse { animation: btn-pulse .55s ease-out; }

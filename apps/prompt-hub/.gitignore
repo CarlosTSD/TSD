@@ -1,0 +1,5 @@
+.env
+.env.local
+.hf_session.json
+node_modules/
+dist/
