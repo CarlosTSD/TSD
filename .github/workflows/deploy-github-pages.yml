@@ -29,10 +29,10 @@ jobs:
         run: npm ci
 
       - name: Build crono-app
-        working-directory: apps/crono-app
         env:
           VITE_BASE: '/TSD/'
-        run: npm run build
+        # Use workspace exec from repo root so vite resolves like local `npm run build:crono`
+        run: npm exec -w apps/crono-app -- vite build
 
       - uses: actions/upload-pages-artifact@v3
         with:
