@@ -22,16 +22,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build crono-app
+        working-directory: apps/crono-app
         env:
-          VITE_BASE: /TSD/
-        run: npm run build:crono
+          VITE_BASE: '/TSD/'
+        run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
