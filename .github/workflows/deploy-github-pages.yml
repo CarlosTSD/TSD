@@ -22,7 +22,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # Vite 8 / Rolldown requires ^20.19.0 || >=22.12.0 — bare "22" can be 22.11.x and fail
+          node-version: '22.14'
           cache: npm
 
       - name: Install dependencies
