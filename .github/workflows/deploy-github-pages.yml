@@ -1,4 +1,4 @@
-name: Deploy crono-app to GitHub Pages
+name: Deploy crono-app + crono-app-v1.1 to GitHub Pages
 
 on:
   push:
@@ -29,15 +29,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build crono-app
+      - name: Build crono-app (root)
         env:
           VITE_BASE: '/TSD/'
         # Use workspace exec from repo root so vite resolves like local `npm run build:crono`
         run: npm exec -w apps/crono-app -- vite build
 
+      - name: Build crono-app-v1.1 (/v1.1)
+        env:
+          VITE_BASE: '/TSD/v1.1/'
+        run: npm exec -w apps/crono-app-v1.1 -- vite build
+
+      - name: Combine dists into _site
+        run: |
+          mkdir -p _site
+          cp -r apps/crono-app/dist/. _site/
+          mkdir -p _site/v1.1
+          cp -r apps/crono-app-v1.1/dist/. _site/v1.1/
+
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/crono-app/dist
+          path: _site
 
   deploy:
     needs: build
