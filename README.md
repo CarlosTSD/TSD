@@ -7,9 +7,10 @@ Monorepo das aplicações internas TSD.
 ```
 TSD/
 ├── apps/
-│   ├── crono-app/    # App de cronograma (React + Vite)
-│   └── prompt-hub/   # Hub de prompts (React + Vite + Express + Higgsfield/Anthropic)
-├── package.json      # workspaces npm
+│   ├── crono-app/        # App de cronograma — v1.0 estável (React + Vite)
+│   ├── crono-app-v1.1/   # Versão experimental do crono-app (testes, novas integrações)
+│   └── prompt-hub/       # Hub de prompts (React + Vite + Express + Higgsfield/Anthropic)
+├── package.json          # workspaces npm
 └── README.md
 ```
 
@@ -31,19 +32,22 @@ O `npm install` na raiz instala dependências de todos os workspaces.
 
 Da raiz do monorepo:
 
-| Comando              | O que faz                                       |
-| -------------------- | ----------------------------------------------- |
-| `npm run dev:crono`  | Sobe o dev server do `crono-app`                |
-| `npm run dev:hub`    | Sobe Vite + Express do `prompt-hub`             |
-| `npm run build`      | Builda todos os apps que têm script `build`     |
-| `npm run build:crono`| Builda apenas o `crono-app`                     |
-| `npm run build:hub`  | Builda apenas o `prompt-hub`                    |
-| `npm run lint`       | Roda lint em todos os apps que têm o script     |
+| Comando                  | O que faz                                       |
+| ------------------------ | ----------------------------------------------- |
+| `npm run dev:crono`      | Sobe o dev server do `crono-app` (v1.0)         |
+| `npm run dev:crono-v1.1` | Sobe o dev server do `crono-app-v1.1`           |
+| `npm run dev:hub`        | Sobe Vite + Express do `prompt-hub`             |
+| `npm run build`          | Builda todos os apps que têm script `build`     |
+| `npm run build:crono`    | Builda apenas o `crono-app`                     |
+| `npm run build:crono-v1.1` | Builda apenas o `crono-app-v1.1`              |
+| `npm run build:hub`      | Builda apenas o `prompt-hub`                    |
+| `npm run lint`           | Roda lint em todos os apps que têm o script     |
 
 Também é possível entrar em cada app diretamente:
 
 ```bash
 cd apps/crono-app && npm run dev
+cd apps/crono-app-v1.1 && npm run dev
 cd apps/prompt-hub && npm run dev
 ```
 
@@ -51,7 +55,11 @@ cd apps/prompt-hub && npm run dev
 
 ### crono-app
 
-App de cronograma com exportação para PDF/Excel. Stack: React 19, Vite 8, date-fns, jspdf, html2canvas, xlsx.
+App de cronograma com exportação para PDF/Excel — versão estável (v1.0). Stack: React 19, Vite 8, date-fns, jspdf, html2canvas, xlsx. Deployado no GitHub Pages.
+
+### crono-app-v1.1
+
+Versão experimental do crono-app — sandbox para testar novas interfaces e integrações sem afetar o v1.0. Mesma stack do v1.0. Roda apenas localmente por enquanto (sem deploy).
 
 ### prompt-hub
 

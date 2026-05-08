@@ -2,14 +2,16 @@
   "name": "tsd",
   "private": true,
   "version": "0.1.0",
-  "description": "Monorepo TSD — agrega aplicações internas (crono-app, prompt-hub).",
+  "description": "Monorepo TSD — agrega aplicações internas (crono-app, crono-app-v1.1, prompt-hub).",
   "workspaces": [
     "apps/*"
   ],
   "scripts": {
     "dev:crono": "npm run dev --workspace apps/crono-app",
+    "dev:crono-v1.1": "npm run dev --workspace apps/crono-app-v1.1",
     "dev:hub": "npm run dev --workspace apps/prompt-hub",
     "build:crono": "npm run build --workspace apps/crono-app",
+    "build:crono-v1.1": "npm run build --workspace apps/crono-app-v1.1",
     "build:hub": "npm run build --workspace apps/prompt-hub",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present"
