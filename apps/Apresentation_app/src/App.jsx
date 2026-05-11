@@ -615,7 +615,7 @@ function FooterHeading({ text, color, mobile, maxFontPx = 600 }) {
     const ro = new ResizeObserver(fit)
     ro.observe(wrapRef.current)
     return () => ro.disconnect()
-  }, [widest])
+  }, [widest, maxFontPx])
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
@@ -655,12 +655,12 @@ function Footer({ cfg }) {
 
   // ── Limite responsivo do heading desktop: TRESSDE cortado no máx 5% ──
   const [maxHFont, setMaxHFont] = useState(600)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (mobile) { setMaxHFont(600); return }
     const calc = () => {
       const vw = window.innerWidth, vh = window.innerHeight
       // estimativa da altura do TRESSDE (7 chars, Helvetica Neue 700)
-      const tressdeH = 0.82 * (vw - 88) / (7 * 0.53)
+      const tressdeH = 0.82 * (vw - 88) / (7 * 0.65)
       // espaço mínimo do spacer (clamp igual ao CSS)
       const spacerMin = Math.min(72, Math.max(28, vh * 0.05))
       // área disponível para o heading dentro de 90vh
