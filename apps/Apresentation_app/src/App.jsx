@@ -715,7 +715,7 @@ function Footer({ cfg }) {
           </div>
 
           {/* Heading esquerda + subtítulo/seta direita */}
-          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 40 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 40, flexShrink: 0 }}>
             <div style={anim(100)}>
               <FooterHeading text={heading} color={CREAM} mobile={false} />
             </div>
@@ -733,19 +733,16 @@ function Footer({ cfg }) {
             </div>
           </div>
 
-          {/* Divisória 1 — separa heading do espaço central */}
-          <div style={{ height: 1, background: LINE, margin: '36px 0 0' }} />
-
-          {/* Spacer flexível — gap central */}
+          {/* Spacer — empurra a linha + TRESSDE para o fundo */}
           <div style={{ flex: 1, minHeight: 0 }} />
 
-          {/* Divisória 2 — logo acima do TRESSDE */}
-          <div style={{ height: 1, background: LINE }} />
+          {/* Única linha horizontal no desktop — logo acima do TRESSDE */}
+          <div style={{ flex: '0 0 1px', background: LINE }} />
 
           {/* Nome do estúdio — 36px abaixo da linha, leve crop na base */}
           <div style={{
             lineHeight: 0.82, color: CREAM,
-            marginTop: 36,
+            marginTop: 36, flexShrink: 0,
             marginLeft: -SIDE, marginRight: -SIDE,
             marginBottom: '-0.12em',
             ...anim(440, 60),
