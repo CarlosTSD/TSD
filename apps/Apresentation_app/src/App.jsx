@@ -770,24 +770,14 @@ const DEFAULT_CFG = {
   footerStudio: 'TRESSDE',
 }
 
-// ─── useCfg: reads config from URL / sessionStorage / localStorage / postMessage ─
+// ─── useCfg: reads config from sessionStorage / localStorage#slug / postMessage ─
 function readFromStorage() {
   try {
-    const hash = window.location.hash || ''
-
-    // Link portável: cfg completo codificado diretamente na URL (qualquer dispositivo)
-    const cfgMatch = hash.match(/[#&]cfg=([^&]+)/)
-    if (cfgMatch) {
-      return { ...DEFAULT_CFG, ...JSON.parse(decodeURIComponent(atob(cfgMatch[1]))) }
-    }
-
-    // Legado/local: slug → localStorage (mesmo dispositivo)
-    const slugMatch = hash.match(/p=([^&]+)/)
-    if (slugMatch) {
+    const hash = (window.location.hash || '').match(/p=([^&]+)/)
+    if (hash) {
       const map = JSON.parse(localStorage.getItem('tressde:projects') || '{}')
-      if (map[slugMatch[1]]?.cfg) return { ...DEFAULT_CFG, ...map[slugMatch[1]].cfg }
+      if (map[hash[1]]?.cfg) return { ...DEFAULT_CFG, ...map[hash[1]].cfg }
     }
-
     const sess = sessionStorage.getItem('tressde:previewCfg')
     if (sess) return { ...DEFAULT_CFG, ...JSON.parse(sess) }
   } catch (_) {}

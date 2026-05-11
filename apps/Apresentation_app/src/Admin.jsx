@@ -399,8 +399,7 @@ export default function Admin() {
     localStorage.setItem(LIST_KEY, JSON.stringify(updated))
     setList(updated)
     setCurrentId(id)
-    const cfgParam = btoa(encodeURIComponent(JSON.stringify(savedCfg)))
-    return { id, slug, name, link: `${window.location.origin}${import.meta.env.BASE_URL}#cfg=${cfgParam}` }
+    return { id, slug, name, link: `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` }
   }
 
   function save() {
@@ -438,10 +437,8 @@ export default function Admin() {
 
   function getSlug() { return list.find(p => p.id === currentId)?.slug }
   function getLink() {
-    try {
-      const cfgParam = btoa(encodeURIComponent(JSON.stringify(cfg)))
-      return `${window.location.origin}${import.meta.env.BASE_URL}#cfg=${cfgParam}`
-    } catch { return null }
+    const slug = getSlug()
+    return slug ? `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` : null
   }
 
   async function copyLink() {
