@@ -317,15 +317,33 @@ const IconArrowNE = ({ size = 20 }) => (
     <polyline points="11,4 16,4 16,9" />
   </svg>
 )
-const ArrowToTop = ({ size = 20, color }) => (
-  <button
-    onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-    aria-label="Voltar ao topo"
-    style={{ background: 'none', border: 'none', color, cursor: 'pointer', padding: 0, display: 'flex' }}
-  >
-    <IconArrowNE size={size} />
-  </button>
-)
+function ArrowToTop({ size = 20, color }) {
+  const [hover, setHover] = useState(false)
+  const [active, setActive] = useState(false)
+  const scale = active ? 0.82 : hover ? 1.18 : 1
+  const rotate = hover ? '-8deg' : '0deg'
+  return (
+    <button
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      aria-label="Voltar ao topo"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => { setHover(false); setActive(false) }}
+      onMouseDown={() => setActive(true)}
+      onMouseUp={() => setActive(false)}
+      style={{
+        background: 'none', border: 'none', color, cursor: 'pointer',
+        padding: 0, display: 'flex', outline: 'none',
+        transform: `scale(${scale}) rotate(${rotate})`,
+        transition: active
+          ? 'transform 0.08s cubic-bezier(0.34,1.56,0.64,1)'
+          : 'transform 0.35s cubic-bezier(0.34,1.56,0.64,1)',
+        transformOrigin: 'center',
+      }}
+    >
+      <IconArrowNE size={size} />
+    </button>
+  )
+}
 
 // SVG fractal-noise grain tile (256×256, grayscale, tiled as overlay)
 const GRAIN_URL = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E\")"
