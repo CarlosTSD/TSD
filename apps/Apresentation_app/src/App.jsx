@@ -307,12 +307,21 @@ const IconExpand = () => (
 )
 
 // ─── Seta diagonal ↘ ─────────────────────────────────────────────────────────
-const IconArrowSE = ({ size = 20 }) => (
+const IconArrowNE = ({ size = 20 }) => (
   <svg width={size} height={size} viewBox="0 0 20 20" fill="none"
     stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="4" y1="4" x2="16" y2="16" />
-    <polyline points="9,16 16,16 16,9" />
+    <line x1="4" y1="16" x2="16" y2="4" />
+    <polyline points="11,4 16,4 16,9" />
   </svg>
+)
+const ArrowToTop = ({ size = 20, color }) => (
+  <button
+    onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+    aria-label="Voltar ao topo"
+    style={{ background: 'none', border: 'none', color, cursor: 'pointer', padding: 0, display: 'flex' }}
+  >
+    <IconArrowNE size={size} />
+  </button>
 )
 
 // SVG fractal-noise grain tile (256×256, grayscale, tiled as overlay)
@@ -597,7 +606,7 @@ function FooterHeading({ text, color, mobile }) {
         <div key={i} style={{
           fontSize: fs, fontWeight: 400, color,
           fontStyle: i === lines.length - 1 ? 'italic' : 'normal',
-          lineHeight: 0.9, letterSpacing: '-0.02em',
+          lineHeight: mobile ? 1.08 : 0.9, letterSpacing: '-0.02em',
           fontFamily: ff, whiteSpace: 'nowrap',
         }}>
           {line}
@@ -682,7 +691,7 @@ function Footer({ cfg }) {
               <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em' }}>
                 {cfg.footerRight}
               </span>
-              <IconArrowSE size={20} />
+              <ArrowToTop size={20} color={CREAM} />
             </div>
 
             <div style={{ height: 1, background: LINE, marginBottom: 28 }} />
@@ -719,20 +728,24 @@ function Footer({ cfg }) {
                 ))}
               </div>
               <div style={anim(380)}>
-                <IconArrowSE size={22} />
+                <ArrowToTop size={22} color={CREAM} />
               </div>
             </div>
           </div>
 
-          {/* Divisória */}
+          {/* Divisória 1 — separa heading do espaço central */}
           <div style={{ height: 1, background: LINE, margin: '36px 0 0' }} />
 
-          {/* Spacer — empurra TRESSDE para o fundo com gap mínimo de 36px */}
-          <div style={{ flex: 1, minHeight: 36 }} />
+          {/* Spacer flexível — gap central */}
+          <div style={{ flex: 1, minHeight: 0 }} />
 
-          {/* Nome do estúdio — travado na base, leve crop */}
+          {/* Divisória 2 — logo acima do TRESSDE */}
+          <div style={{ height: 1, background: LINE }} />
+
+          {/* Nome do estúdio — 36px abaixo da linha, leve crop na base */}
           <div style={{
             lineHeight: 0.82, color: CREAM,
+            marginTop: 36,
             marginLeft: -SIDE, marginRight: -SIDE,
             marginBottom: '-0.12em',
             ...anim(440, 60),
