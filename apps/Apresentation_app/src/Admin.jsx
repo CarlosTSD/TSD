@@ -399,7 +399,7 @@ export default function Admin() {
     localStorage.setItem(LIST_KEY, JSON.stringify(updated))
     setList(updated)
     setCurrentId(id)
-    return { id, slug, name, link: `${window.location.origin}/#p=${slug}` }
+    return { id, slug, name, link: `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` }
   }
 
   function save() {
@@ -438,7 +438,7 @@ export default function Admin() {
   function getSlug() { return list.find(p => p.id === currentId)?.slug }
   function getLink() {
     const slug = getSlug()
-    return slug ? `${window.location.origin}/#p=${slug}` : null
+    return slug ? `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` : null
   }
 
   async function copyLink() {
@@ -811,7 +811,7 @@ export default function Admin() {
               overflow: 'hidden', border: `1px solid ${T.cardLine}`, boxShadow: SHADOW_LG }}>
               <iframe
                 ref={iframeRef}
-                src="/"
+                src={import.meta.env.BASE_URL}
                 title="Apresentation Preview"
                 style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
               />
