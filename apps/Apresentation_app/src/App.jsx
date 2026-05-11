@@ -244,7 +244,7 @@ function HeroKrishna({ onTextBottom, cfg }) {
       <div className="mono" style={{ padding: '0 32px', marginTop: small ? 10 : 16, fontSize: 14,
         letterSpacing: '0.12em', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10 }}>
         {cfg.etapaLabel}
-        <svg width="48" height="10" viewBox="0 0 48 10" fill="none"
+        <svg width="34" height="7" viewBox="0 0 48 10" fill="none"
           stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <line x1="0" y1="5" x2="38" y2="5" />
           <polyline points="32,1 38,5 32,9" />
