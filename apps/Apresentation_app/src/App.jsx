@@ -585,7 +585,7 @@ function SectionBlock({ block, fb = {}, onFeedback }) {
 
 
 // ─── FooterHeading: auto-fit ao container, última linha em itálico ───────────
-function FooterHeading({ text, color, mobile }) {
+function FooterHeading({ text, color, mobile, maxFontPx = 600 }) {
   const wrapRef = useRef(null)
   const testRef = useRef(null)
   const [fs, setFs]   = useState(80)
@@ -602,7 +602,7 @@ function FooterHeading({ text, color, mobile }) {
     if (!wrapRef.current || !testRef.current) return
     const fit = () => {
       const w = wrapRef.current.getBoundingClientRect().width - 2
-      let lo = 12, hi = 600, best = 12
+      let lo = 12, hi = maxFontPx, best = 12
       for (let i = 0; i < 24; i++) {
         const mid = (lo + hi) / 2
         testRef.current.style.fontSize = mid + 'px'
@@ -652,6 +652,27 @@ function Footer({ cfg }) {
   const heading  = cfg.footerHeading || 'WE CREATE\nTHE\nIMPOSSIBLE.'
   const sub      = cfg.footerSub     || '3D, Motion, vfx\nand AI Visual Production'
   const subLines = sub.split('\n')
+
+  // ── Limite responsivo do heading desktop: TRESSDE cortado no máx 5% ──
+  const [maxHFont, setMaxHFont] = useState(600)
+  useEffect(() => {
+    if (mobile) { setMaxHFont(600); return }
+    const calc = () => {
+      const vw = window.innerWidth, vh = window.innerHeight
+      // estimativa da altura do TRESSDE (7 chars, Helvetica Neue 700)
+      const tressdeH = 0.82 * (vw - 88) / (7 * 0.53)
+      // espaço mínimo do spacer (clamp igual ao CSS)
+      const spacerMin = Math.min(72, Math.max(28, vh * 0.05))
+      // área disponível para o heading dentro de 90vh
+      // 44(padding) + 72(topbar) + spacerMin + 1(linha) + 36(marginTop TRESSDE) + 95% TRESSDE
+      const avail = vh * 0.9 - 44 - 72 - spacerMin - 37 - tressdeH * 0.95
+      const nLines = heading.split('\n').filter(Boolean).length || 3
+      setMaxHFont(Math.max(60, Math.floor(avail / (nLines * 0.9))))
+    }
+    calc()
+    window.addEventListener('resize', calc)
+    return () => window.removeEventListener('resize', calc)
+  }, [mobile, heading])
 
   useEffect(() => {
     const el = ref.current
@@ -738,7 +759,7 @@ function Footer({ cfg }) {
           {/* Heading esquerda + subtítulo/seta direita */}
           <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 40, flexShrink: 0 }}>
             <div style={anim(100)}>
-              <FooterHeading text={heading} color={CREAM} mobile={false} />
+              <FooterHeading text={heading} color={CREAM} mobile={false} maxFontPx={maxHFont} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column',
               justifyContent: 'space-between', alignItems: 'flex-end',
