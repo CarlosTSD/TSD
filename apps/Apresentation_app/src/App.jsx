@@ -644,6 +644,7 @@ function Footer({ cfg }) {
   return (
     <footer ref={ref} style={{
       position: 'relative', zIndex: 3, overflow: 'hidden',
+      height: mobile ? '90svh' : '90vh',
       background: cfg.heroBg, color: CREAM,
       borderTopLeftRadius: 32, borderTopRightRadius: 32,
       padding: `${TOP}px ${SIDE}px 0`,
@@ -651,52 +652,51 @@ function Footer({ cfg }) {
     }}>
 
       {mobile ? (
-        /* ── MOBILE ─────────────────────────────────────────────────────── */
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        /* ── MOBILE — 3 grupos distribuídos pela altura do rodapé ─────── */
+        <div style={{ display: 'flex', flexDirection: 'column',
+          height: '100%', justifyContent: 'space-between' }}>
 
-          {/* Top bar centralizado */}
+          {/* ① Top bar centralizado */}
           <div style={{ ...anim(0), textAlign: 'center', fontSize: 12,
-            fontWeight: 600, letterSpacing: '0.15em', marginBottom: 32 }}>
+            fontWeight: 600, letterSpacing: '0.15em' }}>
             {cfg.footerLeft} / {cfg.footerCenter}
           </div>
 
-          {/* Heading (palavra por linha) */}
+          {/* ② Heading — word per line */}
           <div style={anim(80)}>
             <FooterHeading text={heading} color={CREAM} mobile />
           </div>
 
-          {/* Divisória */}
-          <div style={{ ...anim(200), height: 1, background: LINE, margin: '28px 0' }} />
+          {/* ③ Bloco inferior: linha + info + linha + TRESSDE */}
+          <div>
+            <div style={{ ...anim(200), height: 1, background: LINE, marginBottom: 24 }} />
 
-          {/* Subtítulo */}
-          <div style={{ ...anim(280), marginBottom: 24 }}>
-            {subLines.map((l, i) => (
-              <div key={i} style={{ fontSize: 15, lineHeight: 1.55 }}>{l}</div>
-            ))}
-          </div>
+            <div style={{ ...anim(280), marginBottom: 20 }}>
+              {subLines.map((l, i) => (
+                <div key={i} style={{ fontSize: 15, lineHeight: 1.55 }}>{l}</div>
+              ))}
+            </div>
 
-          {/* Ano + seta */}
-          <div style={{ ...anim(360), display: 'flex', justifyContent: 'space-between',
-            alignItems: 'center', marginBottom: 24 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em' }}>
-              {cfg.footerRight}
-            </span>
-            <IconArrowSE size={20} />
-          </div>
+            <div style={{ ...anim(360), display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', marginBottom: 20 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em' }}>
+                {cfg.footerRight}
+              </span>
+              <IconArrowSE size={20} />
+            </div>
 
-          {/* Divisória 2 */}
-          <div style={{ height: 1, background: LINE }} />
+            <div style={{ height: 1, background: LINE, marginBottom: 28 }} />
 
-          {/* Nome do estúdio */}
-          <div style={{ ...anim(500, 60), lineHeight: 0.82, marginTop: 36,
-            marginLeft: -SIDE, marginRight: -SIDE, marginBottom: '-0.16em' }}>
-            <FitTitle text={cfg.footerStudio} weight={700} max={700} />
+            <div style={{ ...anim(500, 60), lineHeight: 0.82,
+              marginLeft: -SIDE, marginRight: -SIDE, marginBottom: '-0.3em' }}>
+              <FitTitle text={cfg.footerStudio} weight={700} max={700} />
+            </div>
           </div>
         </div>
 
       ) : (
-        /* ── DESKTOP ────────────────────────────────────────────────────── */
-        <>
+        /* ── DESKTOP — flex column, TRESSDE travado na base ─────────────── */
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           {/* Top bar */}
           <div style={{ ...anim(0), display: 'flex', justifyContent: 'space-between',
             alignItems: 'center', marginBottom: 52,
@@ -707,11 +707,9 @@ function Footer({ cfg }) {
 
           {/* Heading esquerda + subtítulo/seta direita */}
           <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 40 }}>
-
             <div style={anim(100)}>
               <FooterHeading text={heading} color={CREAM} mobile={false} />
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column',
               justifyContent: 'space-between', alignItems: 'flex-end',
               paddingTop: 4, minHeight: 140 }}>
@@ -729,17 +727,19 @@ function Footer({ cfg }) {
           {/* Divisória */}
           <div style={{ height: 1, background: LINE, margin: '36px 0 0' }} />
 
-          {/* Nome do estúdio — gap igual ao da linha acima, crop na base */}
+          {/* Spacer — empurra TRESSDE para o fundo com gap mínimo de 36px */}
+          <div style={{ flex: 1, minHeight: 36 }} />
+
+          {/* Nome do estúdio — travado na base, leve crop */}
           <div style={{
             lineHeight: 0.82, color: CREAM,
-            marginTop: 36,
             marginLeft: -SIDE, marginRight: -SIDE,
-            marginBottom: '-0.16em',
+            marginBottom: '-0.12em',
             ...anim(440, 60),
           }}>
             <FitTitle text={cfg.footerStudio} weight={700} max={700} />
           </div>
-        </>
+        </div>
       )}
     </footer>
   )
