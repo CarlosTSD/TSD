@@ -231,7 +231,7 @@ function HeroKrishna({ onTextBottom, cfg }) {
     return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
   }, [onTextBottom])
 
-  const pt = small ? 14 : 32  // paddingTop do info row
+  const pt = small ? 14 : 18  // paddingTop do info row
 
   return (
     <div data-hero="" style={{ width: '100%', height: '100%',
@@ -241,7 +241,7 @@ function HeroKrishna({ onTextBottom, cfg }) {
       <TopBar section="TSSD" label={cfg.footerRight} tone="light" />
 
       {/* ETAPA label */}
-      <div className="mono" style={{ padding: '0 32px', marginTop: small ? 10 : 16, fontSize: 14,
+      <div className="mono" style={{ padding: '0 32px', marginTop: small ? 10 : 10, fontSize: 14,
         letterSpacing: '0.12em', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10 }}>
         {cfg.etapaLabel}
         <svg width="34" height="7" viewBox="0 0 48 10" fill="none"
@@ -252,7 +252,7 @@ function HeroKrishna({ onTextBottom, cfg }) {
       </div>
 
       {/* Title — auto-fit to full width */}
-      <div style={{ padding: '0 32px', marginTop: small ? 12 : 24, marginBottom: small ? 10 : 24 }}>
+      <div style={{ padding: '0 32px', marginTop: small ? 12 : 12, marginBottom: small ? 10 : 14 }}>
         <FitTitle text={cfg.heroTitle} />
       </div>
 
