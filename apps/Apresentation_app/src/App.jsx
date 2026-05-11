@@ -591,11 +591,11 @@ function FooterHeading({ text, color, mobile }) {
     <div ref={wrapRef} style={{ position: 'relative' }}>
       <span ref={testRef} style={{
         position: 'absolute', visibility: 'hidden', pointerEvents: 'none',
-        whiteSpace: 'nowrap', fontWeight: 700, fontFamily: ff, letterSpacing: '-0.02em',
+        whiteSpace: 'nowrap', fontWeight: 400, fontFamily: ff, letterSpacing: '-0.02em',
       }}>{widest}</span>
       {lines.map((line, i) => (
         <div key={i} style={{
-          fontSize: fs, fontWeight: 700, color,
+          fontSize: fs, fontWeight: 400, color,
           fontStyle: i === lines.length - 1 ? 'italic' : 'normal',
           lineHeight: 0.9, letterSpacing: '-0.02em',
           fontFamily: ff, whiteSpace: 'nowrap',
@@ -644,7 +644,7 @@ function Footer({ cfg }) {
   return (
     <footer ref={ref} style={{
       position: 'relative', zIndex: 3, overflow: 'hidden',
-      height: mobile ? 'auto' : '92vh',
+      height: mobile ? 'auto' : '86vh',
       minHeight: mobile ? '100svh' : 'auto',
       background: cfg.heroBg, color: CREAM,
       borderTopLeftRadius: 32, borderTopRightRadius: 32,
@@ -731,9 +731,9 @@ function Footer({ cfg }) {
           {/* Divisória */}
           <div style={{ height: 1, background: LINE, margin: '36px 0 0' }} />
 
-          {/* Nome do estúdio — cruza o fundo com overflow */}
+          {/* Nome do estúdio — respira da linha, cortado na base */}
           <div style={{
-            position: 'absolute', bottom: '-5%', left: SIDE, right: SIDE,
+            position: 'absolute', bottom: '-14%', left: SIDE, right: SIDE,
             lineHeight: 0.82, color: CREAM,
             ...anim(440, 60), display: 'block',
           }}>
