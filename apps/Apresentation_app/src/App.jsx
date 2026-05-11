@@ -238,14 +238,17 @@ function HeroKrishna({ onTextBottom, cfg }) {
       background: cfg.heroBg, color: '#fff', overflow: 'hidden',
       display: 'flex', flexDirection: 'column' }}>
 
-      <TopBar section="TSSD" label="VFX" tone="light" />
+      <TopBar section="TSSD" label={cfg.footerRight} tone="light" />
 
       {/* ETAPA label */}
       <div className="mono" style={{ padding: '0 32px', marginTop: small ? 10 : 16, fontSize: 14,
-        letterSpacing: '0.12em', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+        letterSpacing: '0.12em', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10 }}>
         {cfg.etapaLabel}
-        <span style={{ display: 'inline-block', width: 28, height: 1, background: '#fff' }} />
-        →
+        <svg width="48" height="10" viewBox="0 0 48 10" fill="none"
+          stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="0" y1="5" x2="38" y2="5" />
+          <polyline points="32,1 38,5 32,9" />
+        </svg>
       </div>
 
       {/* Title — auto-fit to full width */}
