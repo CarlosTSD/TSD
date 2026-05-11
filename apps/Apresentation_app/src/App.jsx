@@ -754,8 +754,8 @@ function Footer({ cfg }) {
             </div>
           </div>
 
-          {/* Spacer — empurra a linha + TRESSDE para o fundo */}
-          <div style={{ flex: 1, minHeight: 0 }} />
+          {/* Spacer — respiro mínimo entre heading e linha/TRESSDE */}
+          <div style={{ flex: 1, minHeight: 'clamp(28px, 5vh, 72px)' }} />
 
           {/* Única linha horizontal no desktop — logo acima do TRESSDE */}
           <div style={{ flex: '0 0 1px', background: LINE }} />
