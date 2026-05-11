@@ -306,6 +306,15 @@ const IconExpand = () => (
   </svg>
 )
 
+// ─── Seta diagonal ↘ ─────────────────────────────────────────────────────────
+const IconArrowSE = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 20 20" fill="none"
+    stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="4" y1="4" x2="16" y2="16" />
+    <polyline points="9,16 16,16 16,9" />
+  </svg>
+)
+
 // SVG fractal-noise grain tile (256×256, grayscale, tiled as overlay)
 const GRAIN_URL = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23g)' opacity='1'/%3E%3C/svg%3E\")"
 
@@ -545,16 +554,78 @@ function SectionBlock({ block, fb = {}, onFeedback }) {
 }
 
 
+// ─── FooterHeading: auto-fit ao container, última linha em itálico ───────────
+function FooterHeading({ text, color, mobile }) {
+  const wrapRef = useRef(null)
+  const testRef = useRef(null)
+  const [fs, setFs]   = useState(80)
+  const ff = '"Helvetica Neue", Helvetica, Arial, sans-serif'
+
+  // Desktop: divide por \n | Mobile: divide por palavra (uma por linha)
+  const lines  = mobile
+    ? text.split(/[\n ]+/).filter(Boolean)
+    : text.split('\n').filter(Boolean)
+  // Linha mais larga (por nº de chars) determina o tamanho
+  const widest = lines.reduce((a, b) => b.length > a.length ? b : a, '')
+
+  useLayoutEffect(() => {
+    if (!wrapRef.current || !testRef.current) return
+    const fit = () => {
+      const w = wrapRef.current.getBoundingClientRect().width - 2
+      let lo = 12, hi = 600, best = 12
+      for (let i = 0; i < 24; i++) {
+        const mid = (lo + hi) / 2
+        testRef.current.style.fontSize = mid + 'px'
+        if (testRef.current.getBoundingClientRect().width <= w) { best = mid; lo = mid }
+        else hi = mid
+      }
+      setFs(Math.floor(best))
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(wrapRef.current)
+    return () => ro.disconnect()
+  }, [widest])
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <span ref={testRef} style={{
+        position: 'absolute', visibility: 'hidden', pointerEvents: 'none',
+        whiteSpace: 'nowrap', fontWeight: 700, fontFamily: ff, letterSpacing: '-0.02em',
+      }}>{widest}</span>
+      {lines.map((line, i) => (
+        <div key={i} style={{
+          fontSize: fs, fontWeight: 700, color,
+          fontStyle: i === lines.length - 1 ? 'italic' : 'normal',
+          lineHeight: 0.9, letterSpacing: '-0.02em',
+          fontFamily: ff, whiteSpace: 'nowrap',
+        }}>
+          {line}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Footer ───────────────────────────────────────────────────────────────────
 function Footer({ cfg }) {
-  const ref = useRef(null)
+  const ref    = useRef(null)
   const [vis, setVis] = useState(false)
   const mobile = useIsMobile(768)
+
+  const CREAM = '#f0ead8'
+  const LINE  = 'rgba(255,255,255,0.22)'
+  const ff    = '"Helvetica Neue", Helvetica, Arial, sans-serif'
+  const SIDE  = mobile ? 24 : 44
+  const TOP   = mobile ? 28 : 44
+
+  const heading  = cfg.footerHeading || 'WE CREATE\nTHE\nIMPOSSIBLE.'
+  const sub      = cfg.footerSub     || '3D, Motion, vfx\nand AI Visual Production'
+  const subLines = sub.split('\n')
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    // Bidirectional: fires on enter AND leave → reverse animation on scroll up
     const obs = new IntersectionObserver(
       ([e]) => { setVis(e.isIntersecting) },
       { threshold: 0.04 }
@@ -563,40 +634,113 @@ function Footer({ cfg }) {
     return () => obs.disconnect()
   }, [])
 
-  // Always transition so reverse (scroll-up) animates out smoothly
-  const item = (delay, y = 28) => ({
-    display: 'inline-block',
+  const ease = 'cubic-bezier(0.22,1,0.36,1)'
+  const anim = (delay, y = 28) => ({
     opacity: vis ? 1 : 0,
     transform: vis ? 'translateY(0)' : `translateY(${y}px)`,
-    transition: `opacity 0.75s ${delay}ms cubic-bezier(0.22,1,0.36,1), transform 0.75s ${delay}ms cubic-bezier(0.22,1,0.36,1)`,
+    transition: `opacity 0.75s ${delay}ms ${ease}, transform 0.75s ${delay}ms ${ease}`,
   })
 
   return (
     <footer ref={ref} style={{
-      position: 'relative', zIndex: 3,
-      height: mobile ? '70vh' : '92vh',
-      overflow: 'hidden',
-      background: cfg.heroBg, color: '#fff',
+      position: 'relative', zIndex: 3, overflow: 'hidden',
+      height: mobile ? 'auto' : '92vh',
+      minHeight: mobile ? '100svh' : 'auto',
+      background: cfg.heroBg, color: CREAM,
       borderTopLeftRadius: 32, borderTopRightRadius: 32,
+      padding: `${TOP}px ${SIDE}px 0`,
+      fontFamily: ff,
     }}>
-      {/* Top bar — stagger esquerda → centro → direita */}
-      <div className="mono" style={{
-        padding: '24px 32px', display: 'flex', justifyContent: 'space-between',
-        alignItems: 'center', fontWeight: 700, fontSize: 13, letterSpacing: '0.18em',
-      }}>
-        <span style={item(0)}>{cfg.footerLeft}</span>
-        <span style={item(200)}>{cfg.footerCenter}</span>
-        <span style={item(400)}>{cfg.footerRight}</span>
-      </div>
 
-      {/* Nome do estúdio — slide maior, entra por último */}
-      <div style={{
-        position: 'absolute', bottom: '-6vh', left: '5%', right: '5%', lineHeight: 0.82,
-        ...item(700, 90),
-        display: 'block',
-      }}>
-        <FitTitle text={cfg.footerStudio} weight={700} max={600} />
-      </div>
+      {mobile ? (
+        /* ── MOBILE ─────────────────────────────────────────────────────── */
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+
+          {/* Top bar centralizado */}
+          <div style={{ ...anim(0), textAlign: 'center', fontSize: 12,
+            fontWeight: 600, letterSpacing: '0.15em', marginBottom: 32 }}>
+            {cfg.footerLeft} / {cfg.footerCenter}
+          </div>
+
+          {/* Heading (palavra por linha) */}
+          <div style={anim(80)}>
+            <FooterHeading text={heading} color={CREAM} mobile />
+          </div>
+
+          {/* Divisória */}
+          <div style={{ ...anim(200), height: 1, background: LINE, margin: '28px 0' }} />
+
+          {/* Subtítulo */}
+          <div style={{ ...anim(280), marginBottom: 24 }}>
+            {subLines.map((l, i) => (
+              <div key={i} style={{ fontSize: 15, lineHeight: 1.55 }}>{l}</div>
+            ))}
+          </div>
+
+          {/* Ano + seta */}
+          <div style={{ ...anim(360), display: 'flex', justifyContent: 'space-between',
+            alignItems: 'center', marginBottom: 24 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.04em' }}>
+              {cfg.footerRight}
+            </span>
+            <IconArrowSE size={20} />
+          </div>
+
+          {/* Divisória 2 */}
+          <div style={{ height: 1, background: LINE }} />
+
+          {/* Nome do estúdio */}
+          <div style={{ ...anim(500, 60), lineHeight: 0.82, marginTop: 12,
+            marginLeft: -SIDE, marginRight: -SIDE }}>
+            <FitTitle text={cfg.footerStudio} weight={700} max={700} />
+          </div>
+        </div>
+
+      ) : (
+        /* ── DESKTOP ────────────────────────────────────────────────────── */
+        <>
+          {/* Top bar */}
+          <div style={{ ...anim(0), display: 'flex', justifyContent: 'space-between',
+            alignItems: 'center', marginBottom: 52,
+            fontSize: 13, fontWeight: 600, letterSpacing: '0.15em' }}>
+            <span>{cfg.footerLeft} / {cfg.footerCenter}</span>
+            <span>{cfg.footerRight}</span>
+          </div>
+
+          {/* Heading esquerda + subtítulo/seta direita */}
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 40 }}>
+
+            <div style={anim(100)}>
+              <FooterHeading text={heading} color={CREAM} mobile={false} />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column',
+              justifyContent: 'space-between', alignItems: 'flex-end',
+              paddingTop: 4, minHeight: 140 }}>
+              <div style={{ ...anim(220), textAlign: 'right' }}>
+                {subLines.map((l, i) => (
+                  <div key={i} style={{ fontSize: 16, lineHeight: 1.55 }}>{l}</div>
+                ))}
+              </div>
+              <div style={anim(380)}>
+                <IconArrowSE size={22} />
+              </div>
+            </div>
+          </div>
+
+          {/* Divisória */}
+          <div style={{ height: 1, background: LINE, margin: '36px 0 0' }} />
+
+          {/* Nome do estúdio — cruza o fundo com overflow */}
+          <div style={{
+            position: 'absolute', bottom: '-5%', left: SIDE, right: SIDE,
+            lineHeight: 0.82, color: CREAM,
+            ...anim(440, 60), display: 'block',
+          }}>
+            <FitTitle text={cfg.footerStudio} weight={700} max={700} />
+          </div>
+        </>
+      )}
     </footer>
   )
 }
@@ -764,10 +908,12 @@ const DEFAULT_CFG = {
     },
   ],
 
-  footerLeft:   'TSSD',
-  footerCenter: 'O Boticário',
-  footerRight:  'VFX',
-  footerStudio: 'TRESSDE',
+  footerLeft:    'TSSD',
+  footerCenter:  'O Boticário',
+  footerRight:   '2026',
+  footerStudio:  'TRESSDE',
+  footerHeading: 'WE CREATE\nTHE\nIMPOSSIBLE.',
+  footerSub:     '3D, Motion, vfx\nand AI Visual Production',
 }
 
 // ─── useCfg: reads config from sessionStorage / localStorage#slug / postMessage ─
