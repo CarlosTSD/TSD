@@ -1,4 +1,4 @@
-name: Deploy crono-app + crono-app-v1.1 to GitHub Pages
+name: Deploy TSD apps to GitHub Pages
 
 on:
   push:
@@ -22,17 +22,21 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Vite 8 / Rolldown requires ^20.19.0 || >=22.12.0 — bare "22" can be 22.11.x and fail
+          # Vite 6 / Rolldown requires ^20.19.0 || >=22.12.0
           node-version: '22.14'
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Build crono-app (root)
+      - name: Build Apresentation_app (landing — root)
         env:
           VITE_BASE: '/TSD/'
-        # Use workspace exec from repo root so vite resolves like local `npm run build:crono`
+        run: npm exec -w apps/Apresentation_app -- vite build
+
+      - name: Build crono-app (/crono)
+        env:
+          VITE_BASE: '/TSD/crono/'
         run: npm exec -w apps/crono-app -- vite build
 
       - name: Build crono-app-v1.1 (/v1.1)
@@ -43,7 +47,9 @@ jobs:
       - name: Combine dists into _site
         run: |
           mkdir -p _site
-          cp -r apps/crono-app/dist/. _site/
+          cp -r apps/Apresentation_app/dist/. _site/
+          mkdir -p _site/crono
+          cp -r apps/crono-app/dist/. _site/crono/
           mkdir -p _site/v1.1
           cp -r apps/crono-app-v1.1/dist/. _site/v1.1/
 

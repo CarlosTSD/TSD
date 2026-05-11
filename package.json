@@ -7,9 +7,11 @@
     "apps/*"
   ],
   "scripts": {
+    "dev:apresentation": "npm run dev --workspace apps/Apresentation_app",
     "dev:crono": "npm run dev --workspace apps/crono-app",
     "dev:crono-v1.1": "npm run dev --workspace apps/crono-app-v1.1",
     "dev:hub": "npm run dev --workspace apps/prompt-hub",
+    "build:apresentation": "npm run build --workspace apps/Apresentation_app",
     "build:crono": "npm run build --workspace apps/crono-app",
     "build:crono-v1.1": "npm run build --workspace apps/crono-app-v1.1",
     "build:hub": "npm run build --workspace apps/prompt-hub",
