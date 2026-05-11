@@ -644,8 +644,6 @@ function Footer({ cfg }) {
   return (
     <footer ref={ref} style={{
       position: 'relative', zIndex: 3, overflow: 'hidden',
-      height: mobile ? 'auto' : '86vh',
-      minHeight: mobile ? '100svh' : 'auto',
       background: cfg.heroBg, color: CREAM,
       borderTopLeftRadius: 32, borderTopRightRadius: 32,
       padding: `${TOP}px ${SIDE}px 0`,
@@ -690,8 +688,8 @@ function Footer({ cfg }) {
           <div style={{ height: 1, background: LINE }} />
 
           {/* Nome do estúdio */}
-          <div style={{ ...anim(500, 60), lineHeight: 0.82, marginTop: 12,
-            marginLeft: -SIDE, marginRight: -SIDE }}>
+          <div style={{ ...anim(500, 60), lineHeight: 0.82, marginTop: 36,
+            marginLeft: -SIDE, marginRight: -SIDE, marginBottom: '-0.16em' }}>
             <FitTitle text={cfg.footerStudio} weight={700} max={700} />
           </div>
         </div>
@@ -731,11 +729,13 @@ function Footer({ cfg }) {
           {/* Divisória */}
           <div style={{ height: 1, background: LINE, margin: '36px 0 0' }} />
 
-          {/* Nome do estúdio — respira da linha, cortado na base */}
+          {/* Nome do estúdio — gap igual ao da linha acima, crop na base */}
           <div style={{
-            position: 'absolute', bottom: '-14%', left: SIDE, right: SIDE,
             lineHeight: 0.82, color: CREAM,
-            ...anim(440, 60), display: 'block',
+            marginTop: 36,
+            marginLeft: -SIDE, marginRight: -SIDE,
+            marginBottom: '-0.16em',
+            ...anim(440, 60),
           }}>
             <FitTitle text={cfg.footerStudio} weight={700} max={700} />
           </div>
