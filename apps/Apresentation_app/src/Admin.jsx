@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import './admin.css'
+import { supabase, fetchMyProjects, fetchProjectById, saveProject } from './lib/supabase.js'
 
 // ─── Paleta (mesma do crono-app v1.1) ─────────────────────────────────────────
 const C = {
@@ -15,11 +16,48 @@ const SHADOW_LG = '0 24px 60px -20px rgba(10,10,10,.15), 0 2px 8px rgba(10,10,10
 const SHADOW_BL = '0 12px 40px -12px rgba(30,15,232,.3)'
 const R = { sm: 8, md: 12, lg: 18, xl: 24, pill: 999 }
 
-// ─── Storage ───────────────────────────────────────────────────────────────────
-const PROJ_KEY = 'tressde:projects'
-const LIST_KEY = 'tressde:apr:list'
-function loadMap()  { try { return JSON.parse(localStorage.getItem(PROJ_KEY) || '{}') } catch { return {} } }
-function loadList() { try { return JSON.parse(localStorage.getItem(LIST_KEY) || '[]') } catch { return [] } }
+// ─── Login Form ────────────────────────────────────────────────────────────────
+function LoginForm() {
+  const [email,    setEmail]    = useState('')
+  const [password, setPassword] = useState('')
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState(null)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setLoading(true); setError(null)
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password })
+    if (err) setError(err.message)
+    setLoading(false)
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: C.white, borderRadius: R.xl, padding: '40px 36px', width: 340,
+        boxShadow: SHADOW_LG, border: `1px solid ${C.border}` }}>
+        <div style={{ fontWeight: 700, fontSize: 18, letterSpacing: '-.03em', marginBottom: 6 }}>tressde</div>
+        <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 28 }}>Apresentation Admin</div>
+        <form onSubmit={handleSubmit}>
+          <label style={labelSt}>Email</label>
+          <input style={{ ...inputSt, marginBottom: 12 }} type="email" value={email}
+            onChange={e => setEmail(e.target.value)} autoFocus required />
+          <label style={labelSt}>Senha</label>
+          <input style={{ ...inputSt, marginBottom: error ? 10 : 20 }} type="password" value={password}
+            onChange={e => setPassword(e.target.value)} required />
+          {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 14 }}>{error}</div>}
+          <button type="submit" disabled={loading} style={{
+            width: '100%', padding: '10px 0', background: C.main, color: '#fff',
+            border: 'none', borderRadius: R.md, fontWeight: 700, fontSize: 13,
+            cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            opacity: loading ? 0.7 : 1,
+          }}>
+            {loading ? 'Entrando…' : 'Entrar'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
 
 // "DD.MM.YY" ↔ "YYYY-MM-DD" (formato do input[type=date])
 function dateToInput(v = '') {
@@ -325,7 +363,9 @@ function BlockEditor({ block, index, onChange, onDelete }) {
 
 // ─── Admin ─────────────────────────────────────────────────────────────────────
 export default function Admin() {
-  const [list,        setList]        = useState(loadList)
+  const [user,        setUser]        = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [list,        setList]        = useState([])
   const [currentId,  setCurrentId]   = useState(null)
   const [projectName,setProjectName] = useState('')
   const [cfg,        setCfg]         = useState(DEFAULT_CFG)
@@ -338,6 +378,24 @@ export default function Admin() {
   const iframeRef  = useRef(null)
   const heroImgRef = useRef(null)
   const toastTimer = useRef(null)
+
+  // ── Auth ────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      setUser(session?.user ?? null)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // ── Carrega lista quando autenticado ────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return
+    fetchMyProjects(user.id).then(setList)
+  }, [user])
 
   // Tema
   useEffect(() => {
@@ -381,55 +439,54 @@ export default function Admin() {
     setCfg(c => ({ ...c, blocks: (c.blocks || []).filter(bl => bl.id !== id) }))
   }
 
-  // Núcleo de persistência — usado por save, copyLink e duplicate
-  function persist(overrideId = null, overrideName = null, overrideCfg = null) {
-    const id      = overrideId || currentId || `p_${Date.now()}`
-    const name    = (overrideName !== null ? overrideName : projectName).trim() || cfg.heroTitle || 'Sem nome'
+  // ── Núcleo de persistência (async Supabase) ────────────────────────────────
+  async function persist(overrideId = null, overrideName = null, overrideCfg = null) {
+    if (!user) { toast$('Não autenticado', 'error'); return null }
     const savedCfg = overrideCfg || cfg
-    const existing = list.find(p => p.id === id)
-    const slug    = existing?.slug
-      || (name.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '') + '-' + id.slice(-6))
+    const name     = (overrideName !== null ? overrideName : projectName).trim() || savedCfg.heroTitle || 'Sem nome'
+    const existing = list.find(p => p.id === (overrideId || currentId))
+    const id       = overrideId || currentId || crypto.randomUUID()
+    const slug     = existing?.slug
+      || (name.toLowerCase().replace(/[^\w\s]+/g, '').trim().replace(/\s+/g, '-') + '-' + id.slice(-8))
 
-    const map = loadMap()
-    map[slug] = { cfg: savedCfg, name, savedAt: new Date().toISOString() }
-    localStorage.setItem(PROJ_KEY, JSON.stringify(map))
+    try {
+      await saveProject({ id, slug, name, ownerId: user.id, cfg: savedCfg })
+    } catch (err) {
+      toast$(err.message || 'Erro ao salvar', 'error')
+      return null
+    }
 
     const item    = { id, slug, name, savedAt: new Date().toISOString() }
     const updated = [item, ...list.filter(p => p.id !== id)]
-    localStorage.setItem(LIST_KEY, JSON.stringify(updated))
     setList(updated)
     setCurrentId(id)
     return { id, slug, name, link: `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` }
   }
 
-  function save() {
-    const { name } = persist()
-    toast$(`"${name}" salvo`)
+  async function save() {
+    const result = await persist()
+    if (result) toast$(`"${result.name}" salvo`)
   }
 
-  function duplicate() {
-    const baseName = projectName.trim() || cfg.heroTitle || 'Sem nome'
-    const newName  = `${baseName} — cópia`
-    const newId    = `p_${Date.now()}`
-
-    const vMatch = (cfg.heroVersion || 'V1').toUpperCase().match(/^V(\d+)$/)
+  async function duplicate() {
+    const baseName    = projectName.trim() || cfg.heroTitle || 'Sem nome'
+    const newName     = `${baseName} — cópia`
+    const newId       = crypto.randomUUID()
+    const vMatch      = (cfg.heroVersion || 'V1').toUpperCase().match(/^V(\d+)$/)
     const nextVersion = vMatch ? `V${parseInt(vMatch[1]) + 1}` : (cfg.heroVersion || 'V1')
-    const newCfg = { ...cfg, heroVersion: nextVersion }
-
-    const { name } = persist(newId, newName, newCfg)
-    setCfg(newCfg)
-    setProjectName(newName)
-    toast$(`"${name}" duplicado → ${nextVersion}`)
+    const newCfg      = { ...cfg, heroVersion: nextVersion }
+    const result      = await persist(newId, newName, newCfg)
+    if (result) { setCfg(newCfg); setProjectName(newName); toast$(`"${result.name}" duplicado → ${nextVersion}`) }
   }
 
-  // Carregar projeto
-  function loadProject(id) {
+  // ── Carregar projeto ────────────────────────────────────────────────────────
+  async function loadProject(id) {
     const item = list.find(p => p.id === id)
     if (!item) return
-    const data = loadMap()[item.slug]
-    if (!data?.cfg) return
-    setCfg({ ...DEFAULT_CFG, ...data.cfg, blocks: data.cfg.blocks || DEFAULT_CFG.blocks })
-    setProjectName(data.name || item.name || '')
+    const data = await fetchProjectById(id)
+    if (!data) { toast$('Projeto não encontrado', 'error'); return }
+    setCfg({ ...DEFAULT_CFG, ...data })
+    setProjectName(item.name || '')
     setCurrentId(id)
     setShowDrawer(false)
     toast$(`"${item.name}" carregado`, 'info')
@@ -442,15 +499,23 @@ export default function Admin() {
   }
 
   async function copyLink() {
-    const { name, link } = persist()
-    try { await navigator.clipboard.writeText(link); toast$(`"${name}" salvo · Link copiado`) }
+    const result = await persist()
+    if (!result) return
+    try { await navigator.clipboard.writeText(result.link); toast$(`"${result.name}" salvo · Link copiado`) }
     catch { toast$('Falha ao copiar', 'error') }
   }
 
-  function openPreview() {
-    const { link } = persist()
-    window.open(link, '_blank')
+  async function openPreview() {
+    const result = await persist()
+    if (result) window.open(result.link, '_blank')
   }
+
+  if (authLoading) return (
+    <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ color: C.inkSoft, fontSize: 13 }}>Carregando…</div>
+    </div>
+  )
+  if (!user) return <LoginForm />
 
   const link = getLink()
   const themeColors = theme === 'dark'
@@ -504,6 +569,13 @@ export default function Admin() {
               color: T.inkSoft, borderRadius: R.pill, letterSpacing: '.08em', fontWeight: 600 }}>
               v1.0 · ADMIN
             </div>
+            <button onClick={() => supabase.auth.signOut()} title="Sair" style={{
+              fontSize: 11, padding: '6px 12px', background: 'transparent',
+              color: T.inkSoft, borderRadius: R.pill, border: `1px solid ${T.border}`,
+              letterSpacing: '.08em', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>
+              SAIR
+            </button>
           </div>
         </header>
 

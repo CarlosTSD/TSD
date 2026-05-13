@@ -32,6 +32,8 @@ jobs:
       - name: Build Apresentation_app (landing — root)
         env:
           VITE_BASE: '/TSD/'
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm exec -w apps/Apresentation_app -- vite build
 
       - name: Build crono-app (/crono)

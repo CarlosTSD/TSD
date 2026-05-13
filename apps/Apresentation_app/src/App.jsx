@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import './index.css'
+import { fetchProjectBySlug } from './lib/supabase.js'
 
 // ─── Math helpers ─────────────────────────────────────────────────────────────
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
@@ -968,14 +969,9 @@ const DEFAULT_CFG = {
   footerSub:     '3D, Motion, vfx\nand AI Visual Production',
 }
 
-// ─── useCfg: reads config from sessionStorage / localStorage#slug / postMessage ─
-function readFromStorage() {
+// ─── useCfg: lê config do Supabase / sessionStorage (preview) / postMessage ──
+function readFromSession() {
   try {
-    const hash = (window.location.hash || '').match(/p=([^&]+)/)
-    if (hash) {
-      const map = JSON.parse(localStorage.getItem('tressde:projects') || '{}')
-      if (map[hash[1]]?.cfg) return { ...DEFAULT_CFG, ...map[hash[1]].cfg }
-    }
     const sess = sessionStorage.getItem('tressde:previewCfg')
     if (sess) return { ...DEFAULT_CFG, ...JSON.parse(sess) }
   } catch (_) {}
@@ -983,33 +979,38 @@ function readFromStorage() {
 }
 
 function useCfg() {
-  const [cfg, setCfg] = useState(() => readFromStorage() || DEFAULT_CFG)
+  const [cfg, setCfg] = useState(() => readFromSession())
 
   useEffect(() => {
-    const reload = () => {
-      const next = readFromStorage()
-      if (next) setCfg(next)
+    const hash = (window.location.hash || '').match(/p=([^&]+)/)
+
+    if (hash) {
+      fetchProjectBySlug(hash[1]).then(data => {
+        if (data) {
+          setCfg({ ...DEFAULT_CFG, ...data })
+        } else {
+          // fallback localStorage (projetos salvos antes da migração)
+          try {
+            const map = JSON.parse(localStorage.getItem('tressde:projects') || '{}')
+            if (map[hash[1]]?.cfg) setCfg({ ...DEFAULT_CFG, ...map[hash[1]].cfg })
+            else setCfg(DEFAULT_CFG)
+          } catch (_) { setCfg(DEFAULT_CFG) }
+        }
+      })
+    } else if (!readFromSession()) {
+      setCfg(DEFAULT_CFG)
     }
 
     const onMsg = (e) => {
       if (e.data?.type === '__apr_cfg' && e.data.cfg)
-        setCfg(c => ({ ...c, ...e.data.cfg }))
+        setCfg(c => ({ ...DEFAULT_CFG, ...(c || {}), ...e.data.cfg }))
     }
-    const onStorage = (e) => { if (e.key === 'tressde:projects') reload() }
-
     window.addEventListener('message', onMsg)
-    window.addEventListener('storage', onStorage)
-    window.addEventListener('focus', reload)
     try { window.parent?.postMessage({ type: '__apr_ready' }, '*') } catch (_) {}
-
-    return () => {
-      window.removeEventListener('message', onMsg)
-      window.removeEventListener('storage', onStorage)
-      window.removeEventListener('focus', reload)
-    }
+    return () => window.removeEventListener('message', onMsg)
   }, [])
 
-  return cfg
+  return cfg || DEFAULT_CFG
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
