@@ -1,5 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
 
+export function generateUUID() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
+
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -125,40 +135,53 @@ export async function saveProject({ id, slug, name, ownerId, cfg }) {
   }, { onConflict: 'project_id' })
   if (ce) throw new Error(ce.message)
 
-  // 3. Deleta blocos antigos (cascata para ap_media)
-  const { error: de } = await supabase.from('ap_blocks').delete().eq('project_id', id)
-  if (de) throw new Error(de.message)
+  // 3. Busca IDs de blocos existentes para saber o que deletar depois
+  const { data: existingBlocks } = await supabase
+    .from('ap_blocks').select('id').eq('project_id', id)
+  const existingIds = new Set((existingBlocks || []).map(b => b.id))
+  const newIds = new Set()
 
-  // 4. Re-insere blocos + media
+  // 4. Upsert blocos + media (insere ANTES de deletar — sem risco de perda)
   for (let bi = 0; bi < (cfg.blocks || []).length; bi++) {
     const b = cfg.blocks[bi]
-    const blockId = crypto.randomUUID()
+    const blockId = b.id || generateUUID()
+    newIds.add(blockId)
 
-    const { error: be } = await supabase.from('ap_blocks').insert({
+    const { error: be } = await supabase.from('ap_blocks').upsert({
       id: blockId, project_id: id, position: bi,
       title: b.title || '', subtitle: b.subtitle || '',
       tag_a: b.tagA || '', tag_b: b.tagB || '', about: b.about || '',
-    })
+    }, { onConflict: 'id' })
     if (be) throw new Error(be.message)
+
+    // Deleta mídia antiga deste bloco e re-insere
+    await supabase.from('ap_media').delete().eq('block_id', blockId)
 
     const images = b.images || []
     if (images.length) {
       const mediaRows = images.map((img, ii) => ({
-        id:             crypto.randomUUID(),
-        block_id:       blockId,
-        project_id:     id,
-        position:       ii,
-        type:           img.type           || 'image',
-        aspect_ratio:   img.ar             || '16/9',
-        storage_path:   img.src            ?? null,
-        mux_upload_id:  img.muxUploadId    ?? null,
-        mux_asset_id:   img.muxAssetId     ?? null,
-        mux_playback_id: img.muxPlaybackId ?? null,
-        mux_status:     img.type === 'video' ? (img.muxStatus ?? 'preparing') : null,
+        id:              generateUUID(),
+        block_id:        blockId,
+        project_id:      id,
+        position:        ii,
+        type:            img.type            || 'image',
+        aspect_ratio:    img.ar              || '16/9',
+        storage_path:    img.src             ?? null,
+        mux_upload_id:   img.muxUploadId     ?? null,
+        mux_asset_id:    img.muxAssetId      ?? null,
+        mux_playback_id: img.muxPlaybackId   ?? null,
+        mux_status:      img.type === 'video' ? (img.muxStatus ?? 'preparing') : null,
       }))
       const { error: me } = await supabase.from('ap_media').insert(mediaRows)
       if (me) throw new Error(me.message)
     }
+  }
+
+  // 5. Deleta apenas blocos que foram removidos da apresentação
+  const toDelete = [...existingIds].filter(eid => !newIds.has(eid))
+  if (toDelete.length) {
+    const { error: de } = await supabase.from('ap_blocks').delete().in('id', toDelete)
+    if (de) throw new Error(de.message)
   }
 
   return { id, slug, name }

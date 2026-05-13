@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import './admin.css'
-import { supabase, fetchMyProjects, fetchProjectById, saveProject } from './lib/supabase.js'
+import { supabase, fetchMyProjects, fetchProjectById, saveProject, generateUUID } from './lib/supabase.js'
 
 // ─── Paleta (mesma do crono-app v1.1) ─────────────────────────────────────────
 const C = {
@@ -408,6 +408,73 @@ function BlockEditor({ block, index, onChange, onDelete }) {
   )
 }
 
+// ─── UserAvatar ───────────────────────────────────────────────────────────────
+function UserAvatar({ user, T, onSignOut }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  const name  = user?.user_metadata?.name || user?.email?.split('@')[0] || '?'
+  const email = user?.email || ''
+  const initials = name.split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        background: open ? T.card : 'transparent',
+        border: `1px solid ${open ? T.cardLine : 'transparent'}`,
+        borderRadius: R.pill, padding: '4px 10px 4px 4px',
+        cursor: 'pointer', fontFamily: 'inherit', transition: 'background .2s, border-color .2s',
+      }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: '50%',
+          background: C.main, color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 800, letterSpacing: '.02em', flexShrink: 0,
+        }}>
+          {initials}
+        </div>
+        <span style={{ fontSize: 12, fontWeight: 600, color: T.ink, maxWidth: 120,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {name}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: 200,
+          background: T.frame === '#1a1a1a' ? '#1a1a1a' : '#fff',
+          border: `1px solid ${T.cardLine}`, borderRadius: R.lg,
+          boxShadow: SHADOW_LG, zIndex: 999, overflow: 'hidden',
+          animation: 'toast-in .18s ease-out',
+        }}>
+          <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${T.cardLine}` }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, marginBottom: 2 }}>{name}</div>
+            <div style={{ fontSize: 11, color: T.inkDim, wordBreak: 'break-all' }}>{email}</div>
+          </div>
+          <button onClick={() => { setOpen(false); onSignOut() }} style={{
+            width: '100%', textAlign: 'left', padding: '10px 16px',
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            fontSize: 13, fontWeight: 600, color: C.red,
+            fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 8,
+            transition: 'background .15s' }}
+            onMouseOver={e => e.currentTarget.style.background = `${C.red}12`}
+            onMouseOut={e  => e.currentTarget.style.background = 'transparent'}>
+            Sair
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Admin ─────────────────────────────────────────────────────────────────────
 export default function Admin() {
   const [user,        setUser]        = useState(null)
@@ -422,9 +489,10 @@ export default function Admin() {
   const [theme,      setTheme]       = useState(() => {
     try { return localStorage.getItem('tressde:apr:theme') || 'light' } catch { return 'light' }
   })
-  const iframeRef  = useRef(null)
-  const heroImgRef = useRef(null)
-  const toastTimer = useRef(null)
+  const iframeRef     = useRef(null)
+  const heroImgRef    = useRef(null)
+  const toastTimer    = useRef(null)
+  const autoLoadDone  = useRef(false)
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -443,6 +511,23 @@ export default function Admin() {
     if (!user) return
     fetchMyProjects(user.id).then(setList)
   }, [user])
+
+  // ── Auto-carrega projeto da URL (#id=<uuid>) ─────────────────────────────────
+  useEffect(() => {
+    if (!user || list.length === 0 || autoLoadDone.current) return
+    const match = (window.location.hash || '').match(/^#id=([^&]+)/)
+    if (!match) return
+    autoLoadDone.current = true
+    const id = match[1]
+    const item = list.find(p => p.id === id)
+    if (!item) return
+    fetchProjectById(id).then(data => {
+      if (!data) return
+      setCfg({ ...DEFAULT_CFG, ...data })
+      setProjectName(item.name || '')
+      setCurrentId(id)
+    })
+  }, [user, list])
 
   // Tema
   useEffect(() => {
@@ -471,7 +556,7 @@ export default function Admin() {
   function set(k, v) { setCfg(c => ({ ...c, [k]: v })) }
 
   function addBlock() {
-    const id = `block-${Date.now()}`
+    const id = generateUUID()
     setCfg(c => {
       const next = (c.blocks || []).length + 1
       return { ...c, blocks: [...(c.blocks || []),
@@ -492,7 +577,7 @@ export default function Admin() {
     const savedCfg = overrideCfg || cfg
     const name     = (overrideName !== null ? overrideName : projectName).trim() || savedCfg.heroTitle || 'Sem nome'
     const existing = list.find(p => p.id === (overrideId || currentId))
-    const id       = overrideId || currentId || crypto.randomUUID()
+    const id       = overrideId || currentId || generateUUID()
     const slug     = existing?.slug
       || (name.toLowerCase().replace(/[^\w\s]+/g, '').trim().replace(/\s+/g, '-') + '-' + id.slice(-8))
 
@@ -507,6 +592,7 @@ export default function Admin() {
     const updated = [item, ...list.filter(p => p.id !== id)]
     setList(updated)
     setCurrentId(id)
+    window.location.hash = `id=${id}`
     return { id, slug, name, link: `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` }
   }
 
@@ -518,7 +604,7 @@ export default function Admin() {
   async function duplicate() {
     const baseName    = projectName.trim() || cfg.heroTitle || 'Sem nome'
     const newName     = `${baseName} — cópia`
-    const newId       = crypto.randomUUID()
+    const newId       = generateUUID()
     const vMatch      = (cfg.heroVersion || 'V1').toUpperCase().match(/^V(\d+)$/)
     const nextVersion = vMatch ? `V${parseInt(vMatch[1]) + 1}` : (cfg.heroVersion || 'V1')
     const newCfg      = { ...cfg, heroVersion: nextVersion }
@@ -536,13 +622,8 @@ export default function Admin() {
     setProjectName(item.name || '')
     setCurrentId(id)
     setShowDrawer(false)
+    window.location.hash = `id=${id}`
     toast$(`"${item.name}" carregado`, 'info')
-  }
-
-  function getSlug() { return list.find(p => p.id === currentId)?.slug }
-  function getLink() {
-    const slug = getSlug()
-    return slug ? `${window.location.origin}${import.meta.env.BASE_URL}#p=${slug}` : null
   }
 
   async function copyLink() {
@@ -564,7 +645,6 @@ export default function Admin() {
   )
   if (!user) return <LoginForm />
 
-  const link = getLink()
   const themeColors = theme === 'dark'
     ? { ...C, frame: '#1a1a1a', card: '#262626', cardLine: '#2e2e2e', bg: '#0a0a0a',
         ink: '#fff', inkSoft: 'rgba(255,255,255,.7)', inkDim: 'rgba(255,255,255,.45)',
@@ -603,26 +683,11 @@ export default function Admin() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifySelf: 'end' }}>
-            <button onClick={openPreview} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              fontSize: 11, padding: '6px 12px',
-              background: T.invertBg, color: T.invertText,
-              borderRadius: R.pill, border: 'none', letterSpacing: '.08em',
-              fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-            }}>
-              PRÉVIA <IconArrow />
-            </button>
             <div style={{ fontSize: 11, padding: '6px 12px', background: T.card,
               color: T.inkSoft, borderRadius: R.pill, letterSpacing: '.08em', fontWeight: 600 }}>
               v1.0 · ADMIN
             </div>
-            <button onClick={() => supabase.auth.signOut()} title="Sair" style={{
-              fontSize: 11, padding: '6px 12px', background: 'transparent',
-              color: T.inkSoft, borderRadius: R.pill, border: `1px solid ${T.border}`,
-              letterSpacing: '.08em', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-            }}>
-              SAIR
-            </button>
+            <UserAvatar user={user} T={T} onSignOut={() => supabase.auth.signOut()} />
           </div>
         </header>
 
@@ -688,9 +753,6 @@ export default function Admin() {
                         borderRadius: R.md, cursor: 'pointer', fontFamily: 'inherit',
                         transition: 'border-color .2s, background .2s' }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>{p.name}</div>
-                        <div style={{ fontSize: 10, color: C.inkDim, marginTop: 2, fontFamily: 'monospace' }}>
-                          /#p={p.slug}
-                        </div>
                       </button>
                     ))
                   }
@@ -881,6 +943,18 @@ export default function Admin() {
             {/* AÇÕES */}
             <SectionHead>Ações</SectionHead>
 
+            <button type="button" onClick={openPreview} style={{
+              width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+              background: T.invertBg, border: 'none',
+              borderRadius: R.pill, color: T.invertText,
+              fontWeight: 700, fontSize: 13, padding: '11px 16px',
+              cursor: 'pointer', fontFamily: 'inherit', marginBottom: 8,
+              letterSpacing: '.04em', transition: 'opacity .2s' }}
+              onMouseOver={e => e.currentTarget.style.opacity = '.82'}
+              onMouseOut={e  => e.currentTarget.style.opacity = '1'}>
+              <IconArrow /> Prévia
+            </button>
+
             <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
               <button type="button" onClick={save} style={{
                 flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -915,13 +989,6 @@ export default function Admin() {
               onMouseOut={e  => { e.currentTarget.style.background = T.card;     e.currentTarget.style.color = T.inkSoft }}>
               <IconCopy /> Duplicar
             </button>
-
-            {link && (
-              <p style={{ fontSize: 10, color: C.inkDim, textAlign: 'center',
-                lineHeight: 1.5, wordBreak: 'break-all', fontFamily: 'monospace' }}>
-                {link}
-              </p>
-            )}
           </aside>
 
           {/* ── Preview (iframe) ─────────────────────────────────────────────── */}
@@ -930,7 +997,7 @@ export default function Admin() {
               overflow: 'hidden', border: `1px solid ${T.cardLine}`, boxShadow: SHADOW_LG }}>
               <iframe
                 ref={iframeRef}
-                src={import.meta.env.BASE_URL}
+                src={`${import.meta.env.BASE_URL}#preview`}
                 title="Apresentation Preview"
                 style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
               />
