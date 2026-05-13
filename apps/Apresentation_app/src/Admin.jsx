@@ -18,40 +18,87 @@ const R = { sm: 8, md: 12, lg: 18, xl: 24, pill: 999 }
 
 // ─── Login Form ────────────────────────────────────────────────────────────────
 function LoginForm() {
+  const [mode,     setMode]     = useState('login')   // 'login' | 'signup'
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
+  const [name,     setName]     = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState(null)
+  const [success,  setSuccess]  = useState(null)
+
+  function switchMode(m) { setMode(m); setError(null); setSuccess(null) }
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setLoading(true); setError(null)
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password })
-    if (err) setError(err.message)
+    setLoading(true); setError(null); setSuccess(null)
+
+    if (mode === 'login') {
+      const { error: err } = await supabase.auth.signInWithPassword({ email, password })
+      if (err) setError(err.message)
+    } else {
+      const { error: err } = await supabase.auth.signUp({
+        email, password,
+        options: { data: { name: name.trim() || email.split('@')[0] } },
+      })
+      if (err) setError(err.message)
+      else setSuccess('Conta criada! Verifique seu email para confirmar.')
+    }
     setLoading(false)
   }
+
+  const isLogin = mode === 'login'
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ background: C.white, borderRadius: R.xl, padding: '40px 36px', width: 340,
         boxShadow: SHADOW_LG, border: `1px solid ${C.border}` }}>
+
         <div style={{ fontWeight: 700, fontSize: 18, letterSpacing: '-.03em', marginBottom: 6 }}>tressde</div>
         <div style={{ fontSize: 13, color: C.inkSoft, marginBottom: 28 }}>Apresentation Admin</div>
+
+        {/* Tabs login / criar conta */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 24, background: C.bg,
+          borderRadius: R.md, padding: 4 }}>
+          {[['login', 'Entrar'], ['signup', 'Criar conta']].map(([m, label]) => (
+            <button key={m} type="button" onClick={() => switchMode(m)} style={{
+              flex: 1, padding: '7px 0', borderRadius: R.sm - 2, border: 'none',
+              fontFamily: 'inherit', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+              background: mode === m ? C.white : 'transparent',
+              color: mode === m ? C.ink : C.inkSoft,
+              boxShadow: mode === m ? SHADOW : 'none',
+              transition: 'background .2s, color .2s, box-shadow .2s',
+            }}>{label}</button>
+          ))}
+        </div>
+
         <form onSubmit={handleSubmit}>
+          {!isLogin && (
+            <>
+              <label style={labelSt}>Nome</label>
+              <input style={{ ...inputSt, marginBottom: 12 }} type="text" value={name}
+                placeholder="Seu nome" onChange={e => setName(e.target.value)} autoFocus />
+            </>
+          )}
+
           <label style={labelSt}>Email</label>
           <input style={{ ...inputSt, marginBottom: 12 }} type="email" value={email}
-            onChange={e => setEmail(e.target.value)} autoFocus required />
+            onChange={e => setEmail(e.target.value)} autoFocus={isLogin} required />
+
           <label style={labelSt}>Senha</label>
-          <input style={{ ...inputSt, marginBottom: error ? 10 : 20 }} type="password" value={password}
-            onChange={e => setPassword(e.target.value)} required />
-          {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 14 }}>{error}</div>}
+          <input style={{ ...inputSt, marginBottom: error || success ? 10 : 20 }}
+            type="password" value={password} onChange={e => setPassword(e.target.value)}
+            minLength={isLogin ? undefined : 6} required />
+
+          {error   && <div style={{ fontSize: 12, color: C.red,   marginBottom: 14 }}>{error}</div>}
+          {success && <div style={{ fontSize: 12, color: C.green, marginBottom: 14 }}>{success}</div>}
+
           <button type="submit" disabled={loading} style={{
             width: '100%', padding: '10px 0', background: C.main, color: '#fff',
             border: 'none', borderRadius: R.md, fontWeight: 700, fontSize: 13,
             cursor: loading ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
             opacity: loading ? 0.7 : 1,
           }}>
-            {loading ? 'Entrando…' : 'Entrar'}
+            {loading ? (isLogin ? 'Entrando…' : 'Criando…') : (isLogin ? 'Entrar' : 'Criar conta')}
           </button>
         </form>
       </div>
