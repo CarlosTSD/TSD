@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
@@ -19,10 +20,127 @@ app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json({ limit: '25mb' })); // base64 de imagens de referência
 
 const client = new Anthropic();
+const openai = process.env.OPENAI_API_KEY ? new OpenAI() : null;
+
+// ── Embeddings (RAG): seleciona top-K exemplos da biblioteca por similaridade ──
+const EMBED_MODEL = 'text-embedding-3-small';
+const EMBED_FILE = path.resolve('.library-embeddings.json');
+const TOP_K_DEFAULT = 5;
+
+function loadEmbeddings() {
+  try { const d = JSON.parse(fs.readFileSync(EMBED_FILE, 'utf8')); return d && typeof d === 'object' ? d : {}; }
+  catch { return {}; }
+}
+function saveEmbeddings(map) {
+  try { fs.writeFileSync(EMBED_FILE, JSON.stringify(map)); }
+  catch (e) { console.error('[embed] save failed:', e.message); }
+}
+
+async function embedText(text) {
+  if (!openai) throw new Error('OPENAI_API_KEY ausente — RAG desativado');
+  const r = await openai.embeddings.create({ model: EMBED_MODEL, input: text });
+  return r.data[0].embedding;
+}
+
+function cosine(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) || 1);
+}
+
+// Score do usuário (👍/👎) entra no ranking, capado pra não atropelar similaridade semântica
+const SCORE_WEIGHT = 0.03; // 1 polegar = ±3% no rank
+const SCORE_CAP = 0.18;    // máx ±18% (≈ 6 polegares saturam)
+
+async function topKExamples({ query, generator, k = TOP_K_DEFAULT }) {
+  if (!query || !openai) return [];
+  const items = loadLibrary().filter(l => l.generator === generator);
+  if (!items.length) return [];
+
+  const map = loadEmbeddings();
+  const missing = items.filter(it => !map[it.id]);
+  if (missing.length) {
+    try {
+      const resp = await openai.embeddings.create({ model: EMBED_MODEL, input: missing.map(m => m.content) });
+      resp.data.forEach((d, i) => { map[missing[i].id] = d.embedding; });
+      saveEmbeddings(map);
+    } catch (e) { console.error('[embed] lazy embed failed:', e.message); }
+  }
+
+  let queryVec;
+  try { queryVec = await embedText(query); }
+  catch (e) {
+    console.error('[embed] query failed:', e.message);
+    return items.slice(0, k).map(i => ({ id: i.id, content: i.content, score: 0 }));
+  }
+
+  return items
+    .filter(it => map[it.id])
+    .map(it => {
+      const sim = cosine(queryVec, map[it.id]);
+      const bonus = Math.max(-SCORE_CAP, Math.min(SCORE_CAP, (it.score || 0) * SCORE_WEIGHT));
+      return { id: it.id, content: it.content, sim, score: it.score || 0, rank: sim + bonus };
+    })
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, k);
+}
 
 function enforceResolution(text) {
   return text.replace(/\b(?:HD|2K|4K|1080p|720p|4096|2048|1920)[^\w,.]*/gi, 'ultra resolution, 8K ');
 }
+
+// Reforço de ângulos top-down / overhead — modelos de imagem têm viés forte pra eye-level
+const ANGLE_REINFORCEMENT_RULE = `ANGLE REINFORCEMENT — when the configuration specifies any of these angles: "Overhead", "Top-down", "Bird's eye", "High angle", "Worm's eye", "Low angle", "Dutch angle":
+- Express the angle EXPLICITLY and REDUNDANTLY using 2-3 positional phrases (image generation models like Nano Banana Pro and GPT-Image have a strong bias toward eye-level and ignore subtle angle hints)
+- For Top-down / Overhead / Bird's eye: use phrases like "shot from directly overhead", "camera pointed straight down at a 90-degree vertical angle", "viewed from above", "flat lay composition"
+- For Worm's eye / Low angle: use phrases like "shot from below looking up", "camera positioned near the ground tilted upward"
+- For High angle: use phrases like "shot from above looking down at an angle", "elevated camera position"
+- Additionally, when the angle is Top-down / Overhead / Bird's eye AND the subject is normally upright (bottle, can, jar, person standing, glass), describe the subject as laid flat or oriented horizontally (e.g. "the perfume bottle lying horizontally on the surface, photographed from directly above")
+- Put the angle reinforcement near the START of the prompt (within the first sentence), not buried in the middle`;
+
+// Notação obrigatória pra referências de mídia
+const MEDIA_REFERENCE_RULE = `MEDIA REFERENCE NOTATION (mandatory):
+- When the configuration includes uploaded image references, refer to them in the prompt EXACTLY as @image_1, @image_2, @image_3, etc.
+- When the configuration includes uploaded video references, refer to them in the prompt EXACTLY as @video_1, @video_2, @video_3, etc.
+- NEVER write "the reference image", "the uploaded image", "the first reference", "image one", "the video reference", or any paraphrase — always the @notation
+- The @notation must appear literally with the @ symbol and the underscore (e.g. "@image_2", not "image 2" or "@image2")
+- If no references were uploaded, do not invent any @image_N or @video_N markers`;
+
+// Guardrail crítico: referências ensinam estilo, NÃO sujeito
+const SUBJECT_ISOLATION_RULE = `CRITICAL — separate STYLE from SUBJECT:
+- Use the references ONLY for: structure, vocabulary, format, section order, technical descriptors, camera language, lighting language, look/grade language, resolution conventions, punctuation, length
+- NEVER copy from the references: product names, brand names, proper nouns, specific people, specific objects, specific locations, specific colors of subjects, specific identifiers
+- The SUBJECT (what the image is OF — product, person, scene, action) must come EXCLUSIVELY from the user's scene description
+- If the user says "perfume bottle" and a reference says "Nike sneaker", the output must describe the perfume bottle — NEVER a sneaker, NEVER Nike
+- Even if a reference contains a similar product, do NOT reuse its specific name/brand unless the user explicitly named it`;
+
+// Parser pra resposta dupla [PROMPT_EN] / [PROMPT_PT] / [CHANGES] (CHANGES é opcional)
+function parseDualLang(raw) {
+  const enMatch = raw.match(/\[PROMPT_EN\]([\s\S]*?)(?=\[PROMPT_PT\]|\[CHANGES\]|$)/i);
+  const ptMatch = raw.match(/\[PROMPT_PT\]([\s\S]*?)(?=\[CHANGES\]|$)/i);
+  const chMatch = raw.match(/\[CHANGES\]([\s\S]*)$/i);
+  let promptEn = enMatch ? enMatch[1].trim() : '';
+  let promptPt = ptMatch ? ptMatch[1].trim() : '';
+  const note = chMatch ? chMatch[1].trim() : '';
+  // Fallback: formato antigo (só [PROMPT]) ou sem marcadores
+  if (!promptEn && !promptPt) {
+    promptEn = raw.replace(/\[PROMPT\]/i, '').replace(/\[CHANGES\][\s\S]*$/i, '').trim();
+  }
+  return { promptEn, promptPt, note };
+}
+
+const DUAL_LANG_FORMAT = `Respond in this exact format — English version FIRST, then Brazilian Portuguese translation:
+[PROMPT_EN]
+The complete prompt in English. This is the primary output and MUST always be in English, regardless of the language used in the reference examples or in the user's input.
+
+[PROMPT_PT]
+A faithful translation of the prompt above into Brazilian Portuguese. Keep technical terms (camera names, lens names, aperture values, aspect ratios, "8K", etc.) untranslated. Translate descriptive prose naturally.`;
+
+const DUAL_LANG_FORMAT_WITH_CHANGES = `${DUAL_LANG_FORMAT}
+
+[CHANGES]
+2-3 sentences in Brazilian Portuguese explaining conversationally what you changed, why you changed it, and what was missing or incorrect. Write naturally, as if explaining to a creative director.`;
 
 const SYSTEM_PROMPT = `You are an expert AI image generation prompt engineer for tools like Midjourney, Stable Diffusion, and Sora.
 
@@ -31,17 +149,12 @@ Your job: receive the current prompt and a user refinement request, then return 
 The prompt follows this structure:
 "Cinematic [shot], [camera] camera with [lens] lens at [focal], [aperture] aperture, 8K resolution, [aspect] aspect ratio, [scene description]. [References if any]. Lighting: [light type]. The visual style should follow: [look/grade]. Scene rules: [rules]. Final image quality: ultra resolution, 8K, photorealistic textures, hyperrealistic render, rich cinematic lighting, precise focus, natural composition, high production value, ultra-detail, photorealistic cinematic quality. Negative prompt: [what to avoid]."
 
-Respond in this exact format — PROMPT first, then CHANGES:
-[PROMPT]
-The complete updated prompt here.
-
-[CHANGES]
-2-3 sentences in Brazilian Portuguese explaining conversationally what you changed, why you changed it, and what was missing or incorrect in the previous version. Write naturally, as if explaining to a creative director.
+${DUAL_LANG_FORMAT_WITH_CHANGES}
 
 Rules:
 - Preserve camera setup, quality, and negative prompt unless explicitly asked to change them
 - Apply the user's change naturally into the existing prompt
-- Keep the same language (English) in the output prompt
+- The [PROMPT_EN] section MUST always be in English
 - First line format: "Cinematic [shot], [camera] camera with [lens] lens at [focal], [aperture] aperture, 8K resolution, [aspect] aspect ratio, [scene]"
 - Quality details belong ONLY in the Final image quality section, never in the first line
 - Never use 2K, 4K, or HD — always 8K resolution`;
@@ -56,16 +169,11 @@ ABSOLUTE PRIORITY — apply the user's change fully and completely:
 - NEVER return the prompt unchanged or nearly unchanged when the user asked for a modification.
 - NEVER just say something is missing without actually adding it.
 
-Respond in this exact format — PROMPT first, then CHANGES:
-[PROMPT]
-The complete updated prompt here — including all existing content PLUS any new content added. The prompt MUST be longer if content was added.
-
-[CHANGES]
-2-3 sentences in Brazilian Portuguese explaining conversationally what you changed, why you changed it, and what was missing or incorrect in the previous version. Write naturally, as if explaining to a creative director.
+${DUAL_LANG_FORMAT_WITH_CHANGES}
 
 Rules:
 - Write all added/changed content following the same formatting style as the existing blocks
-- Keep the language of the prompt as English
+- The [PROMPT_EN] section MUST always be in English
 - Do not trim other sections to compensate for added content`;
 
 const VIDEO_REFINE_PROMPT = `You are an expert AI video generation prompt engineer for tools like Kling, Sora, and Runway.
@@ -75,17 +183,12 @@ Your job: receive the current video prompt and a user refinement request, then r
 The prompt follows this structure:
 "[Shot type], [camera movement], [camera] camera, 8K resolution, [aspect] aspect ratio, [scene with motion description]. [Reference info if any]. Lighting: [light type]. The visual style should follow: [look/grade]. Scene rules: [rules]. Final video quality: ultra resolution, 8K, photorealistic, smooth natural motion, high production value, cinematic depth, rich color grading, sharp focus. Negative prompt: [what to avoid]."
 
-Respond in this exact format — PROMPT first, then CHANGES:
-[PROMPT]
-The complete updated prompt here.
-
-[CHANGES]
-2-3 sentences in Brazilian Portuguese explaining conversationally what you changed, why you changed it, and what was missing or incorrect in the previous version. Write naturally, as if explaining to a creative director.
+${DUAL_LANG_FORMAT_WITH_CHANGES}
 
 Rules:
 - Preserve camera setup, quality specs, and negative prompt unless explicitly asked to change them
 - Apply the user's change naturally into the existing prompt
-- Keep the same language (English) in the output prompt
+- The [PROMPT_EN] section MUST always be in English
 - Always maintain 8K resolution — never use 2K, 4K, or HD
 - Keep motion descriptions vivid and specific`;
 
@@ -95,9 +198,47 @@ app.post('/api/refine', async (req, res) => {
     return res.status(400).json({ error: 'Missing currentPrompt or userMessage' });
   }
 
-  const systemPrompt = generatorId === 'kling' ? VIDEO_REFINE_PROMPT
-    : generatorId === 'gpt2' ? GPT2_REFINE_PROMPT
-    : SYSTEM_PROMPT;
+  // RAG: busca top-K exemplos relevantes (query = pedido do usuário + prompt atual)
+  const relevant = await topKExamples({
+    query: `${userMessage}\n\n${currentPrompt}`,
+    generator: generatorId,
+    k: TOP_K_DEFAULT,
+  });
+  const hasExamples = relevant.length > 0;
+  const usedExampleIds = relevant.map(r => r.id);
+
+  let systemPrompt;
+  if (hasExamples) {
+    // Quando há exemplos, eles ditam estrutura/vocabulário/resolução — sem template fixo
+    const refsBlock = `Reference library — these prompts produced good results in this exact style. They define the structure, vocabulary, formatting, resolution conventions, and section order to use:\n\n${relevant.map((r, i) => `[${i + 1}]\n${r.content}`).join('\n\n')}`;
+    systemPrompt = `You are an AI prompt engineer. Apply the user's modification to the current prompt while keeping it consistent with the reference library style.
+
+${refsBlock}
+${SUBJECT_ISOLATION_RULE}
+
+${MEDIA_REFERENCE_RULE}
+
+${ANGLE_REINFORCEMENT_RULE}
+
+ABSOLUTE PRIORITY — apply the user's change fully and completely:
+- If the user says something is MISSING → ADD it (write the full content; do not just acknowledge).
+- If the user says something is wrong → FIX it.
+- If the user asks to change something → CHANGE it.
+- NEVER return the prompt unchanged when the user asked for a modification.
+
+Style guidance (from the references):
+- Inherit section order, punctuation style, technical depth, resolution conventions and overall format FROM the references
+- Do not impose external defaults (no forced 8K, no forced "Cinematic [shot]" opener, no forced "Negative prompt" ending unless the references use them)
+- The [PROMPT_EN] section MUST always be in English, even if the references use other languages
+
+${DUAL_LANG_FORMAT_WITH_CHANGES}`;
+  } else {
+    // Fallback: comportamento antigo quando a biblioteca está vazia
+    systemPrompt = generatorId === 'kling' ? VIDEO_REFINE_PROMPT
+      : generatorId === 'gpt2' ? GPT2_REFINE_PROMPT
+      : SYSTEM_PROMPT;
+  }
+
   const messages = [
     ...(history || []),
     {
@@ -114,12 +255,11 @@ app.post('/api/refine', async (req, res) => {
       messages,
     });
     const raw = response.content[0].text.trim();
-    // Format: [PROMPT]...[CHANGES]... — split on [CHANGES] to get prompt first
-    const parts = raw.split('[CHANGES]');
-    const promptRaw = parts[0].replace('[PROMPT]', '').trim();
-    const note = (parts[1] || '').trim();
-    const prompt = generatorId === 'gpt2' ? promptRaw : enforceResolution(promptRaw);
-    res.json({ prompt, note });
+    const { promptEn, promptPt, note } = parseDualLang(raw);
+    // Com exemplos ou gpt2: exemplos/usuário decidem a resolução. Senão: enforce 8K
+    const applyEnforce = !(hasExamples || generatorId === 'gpt2');
+    const prompt = applyEnforce ? enforceResolution(promptEn) : promptEn;
+    res.json({ prompt, promptPt, note, usedExampleIds });
   } catch (err) {
     console.error('Claude API error:', err.message);
     res.status(500).json({ error: err.message });
@@ -127,9 +267,17 @@ app.post('/api/refine', async (req, res) => {
 });
 
 app.post('/api/generate', async (req, res) => {
-  const { scene, camera, lens, focalLength, aperture, angles, luz, look, rules, negative, references, aspect, resolution, examples, generatorId } = req.body;
+  const { scene, camera, lens, focalLength, aperture, angles, luz, look, rules, negative, references, aspect, resolution, examples: legacyExamples, generatorId } = req.body;
 
-  const hasExamples = examples?.length > 0;
+  // RAG primeiro; se OPENAI_API_KEY ausente, cai pra examples enviado pelo frontend (compat)
+  const ragExamples = await topKExamples({
+    query: [scene, look, luz, rules].filter(Boolean).join(' — '),
+    generator: generatorId,
+    k: TOP_K_DEFAULT,
+  });
+  const examples = ragExamples.length ? ragExamples.map(r => r.content) : (legacyExamples || []);
+  const usedExampleIds = ragExamples.map(r => r.id);
+  const hasExamples = examples.length > 0;
   const isGpt2 = generatorId === 'gpt2';
 
   /* ── GPT-2: follow reference library structure exactly ── */
@@ -153,6 +301,12 @@ app.post('/api/generate', async (req, res) => {
       ? `You are an AI prompt engineer. Your only job is to generate a new prompt that replicates the EXACT formatting of the reference prompts below.
 
 ${examplesBlock}
+${SUBJECT_ISOLATION_RULE}
+
+${MEDIA_REFERENCE_RULE}
+
+${ANGLE_REINFORCEMENT_RULE}
+
 CRITICAL FORMATTING RULES:
 - Replicate the exact line break structure of the references — if a reference breaks to a new line, you break to a new line in the same position
 - Replicate the exact paragraph structure — if references have blank lines between sections, do the same
@@ -160,51 +314,71 @@ CRITICAL FORMATTING RULES:
 - Do NOT collapse multiple lines into a single paragraph
 - Do NOT merge lines that are separated in the references
 - Mirror the references line-by-line, section-by-section
+- The [PROMPT_EN] section MUST always be in English, even if the references use other languages
+- Follow the reference vocabulary and section order exactly
 
-Additional rules:
-- Return ONLY the prompt, preserving all line breaks exactly
-- No explanations, no labels, no markdown wrapper
-- Write in English
-- Follow the reference vocabulary and section order exactly`
-      : `You are an AI prompt engineer. Generate a single detailed prompt for the described scene.\n\nRules:\n- Return ONLY the prompt\n- No explanations, no labels, no markdown\n- Write in English`;
+${DUAL_LANG_FORMAT}`
+      : `You are an AI prompt engineer. Generate a single detailed prompt for the described scene.
 
-    const gpt2UserMsg = `Generate a prompt for: "${scene || 'a creative scene'}"\n\nConfiguration:\n${configLines}\n\nReturn only the complete prompt.`;
+The [PROMPT_EN] section MUST always be in English.
+
+${DUAL_LANG_FORMAT}`;
+
+    const gpt2UserMsg = `Generate a prompt for: "${scene || 'a creative scene'}"\n\nConfiguration:\n${configLines}\n\nReturn the prompt in the required [PROMPT_EN] / [PROMPT_PT] format.`;
 
     try {
       const response = await client.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
+        max_tokens: 1536,
         system: gpt2System,
         messages: [{ role: 'user', content: gpt2UserMsg }],
       });
-      return res.json({ prompt: response.content[0].text.trim() });
+      const { promptEn, promptPt } = parseDualLang(response.content[0].text.trim());
+      return res.json({ prompt: promptEn, promptPt, usedExampleIds });
     } catch (err) {
       console.error('GPT-2 generate error:', err.message);
       return res.status(500).json({ error: err.message });
     }
   }
 
-  /* ── Nano Banana / Seedance: cinematic structure ── */
-  const examplesBlock = hasExamples
-    ? `\n\nValidated prompt library — these are real prompts that produced great results. Study their structure, vocabulary, technical details, and style:\n\n${examples.map((e, i) => `[${i + 1}]\n${e}`).join('\n\n')}`
-    : '';
-
+  /* ── Nano Banana / Seedance ──
+     Com exemplos: a biblioteca dita estrutura, vocabulário, resolução, ordem.
+     Sem exemplos: fallback cinematográfico tradicional. */
   const config = [
-    `Camera: ${camera || 'Studio Digital S35'}`,
-    `Lens: ${lens || 'Premium Modern Prime'}`,
-    `Focal length: ${focalLength || '35mm'}`,
-    `Aperture: ${aperture || 'f/4'}`,
+    camera ? `Camera: ${camera}` : '',
+    lens ? `Lens: ${lens}` : '',
+    focalLength ? `Focal length: ${focalLength}` : '',
+    aperture ? `Aperture: ${aperture}` : '',
     angles?.length ? `Shot angles: ${angles.join(', ')}` : '',
     luz ? `Lighting: ${luz}` : '',
     look ? `Look/Style: ${look}` : '',
     rules ? `Scene rules: ${rules}` : '',
     negative ? `Extra negative: ${negative}` : '',
-    `Aspect ratio: ${aspect || '16:9'}`,
-    `Resolution: Ultra resolution, 8K output quality`,
+    aspect ? `Aspect ratio: ${aspect}` : '',
     references?.length ? `Image references: ${references.map((r, i) => r.label ? `@image_${i + 1} (${r.label})` : `@image_${i + 1}`).join(', ')}` : '',
   ].filter(Boolean).join('\n');
 
-  const system = `You are an expert AI image generation prompt engineer specializing in cinematic photography prompts for tools like Midjourney, Stable Diffusion, and Sora.${examplesBlock}
+  let system;
+  if (hasExamples) {
+    const examplesBlock = `Validated prompt library — these are real prompts that produced great results. Mirror them as closely as possible:\n\n${examples.map((e, i) => `[${i + 1}]\n${e}`).join('\n\n')}`;
+    system = `You are an AI prompt engineer. Your only job is to generate a new prompt that mirrors the structure, vocabulary, formatting, length, section order, and overall style of the reference prompts below.
+
+${examplesBlock}
+${SUBJECT_ISOLATION_RULE}
+
+${MEDIA_REFERENCE_RULE}
+
+${ANGLE_REINFORCEMENT_RULE}
+
+Rules:
+- Mirror the references exactly — same sections, same order, same punctuation style, same level of technical detail, same resolution conventions
+- Inherit resolution, camera language, quality descriptors and negative prompt style FROM the references — do not impose any external defaults
+- Use the user's scene description and configuration values, but only include the sections the references actually use
+- The [PROMPT_EN] section MUST always be in English, even if the references use other languages
+
+${DUAL_LANG_FORMAT}`;
+  } else {
+    system = `You are an expert AI image generation prompt engineer specializing in cinematic photography prompts for tools like Midjourney, Stable Diffusion, and Sora.
 
 Generate a single, complete, ready-to-use image generation prompt.
 
@@ -212,25 +386,30 @@ The prompt MUST follow this exact structure:
 "Cinematic [shot], [camera] camera with [lens] lens at [focal], [aperture] aperture, 8K resolution, [aspect] aspect ratio, [scene description]. [References if any]. Lighting: [light type]. The visual style should follow: [look/grade]. Scene rules: [rules]. Final image quality: ultra resolution, 8K, photorealistic textures, hyperrealistic render, rich cinematic lighting, precise focus, natural composition, high production value, ultra-detail, photorealistic cinematic quality. Negative prompt: [what to avoid]."
 
 Rules:
-- Write entirely in English
-- ${hasExamples ? 'Follow the style, structure, and vocabulary of the library examples above, adapting to the structure above' : 'Use the cinematic prompt structure above exactly'}
+- The [PROMPT_EN] section MUST always be in English
+- Use the cinematic prompt structure above exactly
 - Incorporate all the user configuration naturally
-- Return ONLY the prompt — no explanations, no labels, no markdown
 - First line: "Cinematic [shot], [camera] camera with [lens] lens at [focal], [aperture] aperture, 8K resolution, [aspect] aspect ratio, [scene]"
 - Quality details (photorealistic textures, hyperrealistic render, etc.) belong ONLY in the Final image quality section, never in the first line
 - Never use 2K, 4K, or HD — always 8K resolution
-- End with "Negative prompt: [what to avoid]"`;
+- End with "Negative prompt: [what to avoid]"
 
-  const userMsg = `Generate a cinematic prompt for this scene: "${scene || 'a cinematic scene'}"\n\nConfiguration:\n${config}\n\nReturn only the complete prompt.`;
+${DUAL_LANG_FORMAT}`;
+  }
+
+  const userMsg = `Generate a prompt for this scene: "${scene || 'a cinematic scene'}"\n\nConfiguration:\n${config || '(no extra config — use only what fits the reference style)'}\n\nReturn the prompt in the required [PROMPT_EN] / [PROMPT_PT] format.`;
 
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 1536,
       system,
       messages: [{ role: 'user', content: userMsg }],
     });
-    res.json({ prompt: enforceResolution(response.content[0].text.trim()) });
+    const { promptEn, promptPt } = parseDualLang(response.content[0].text.trim());
+    // Quando os exemplos guiam, NÃO sobrescreve resolução — exemplos decidem
+    const prompt = hasExamples ? promptEn : enforceResolution(promptEn);
+    res.json({ prompt, promptPt, usedExampleIds });
   } catch (err) {
     console.error('Generate error:', err.message);
     res.status(500).json({ error: err.message });
@@ -238,33 +417,53 @@ Rules:
 });
 
 app.post('/api/generate-video', async (req, res) => {
-  const { scene, camera, shot, cameraMove, speed, luz, look, rules, negative, references, aspect, examples } = req.body;
-  const hasExamples = examples?.length > 0;
+  const { scene, camera, shot, cameraMove, speed, luz, look, rules, negative, references, aspect, examples: legacyExamples } = req.body;
 
-  const examplesBlock = hasExamples
-    ? `\n\nValidated video prompt library — study their structure, vocabulary, motion descriptions, and style:\n\n${examples.map((e, i) => `[${i+1}]\n${e}`).join('\n\n')}`
-    : '';
-
-  const shotType = shot || 'cinematic medium shot';
-  const moves = Array.isArray(cameraMove) && cameraMove.length ? cameraMove.join(', ') : 'static shot';
+  const ragExamples = await topKExamples({
+    query: [scene, shot, look, luz, rules].filter(Boolean).join(' — '),
+    generator: 'kling',
+    k: TOP_K_DEFAULT,
+  });
+  const examples = ragExamples.length ? ragExamples.map(r => r.content) : (legacyExamples || []);
+  const usedExampleIds = ragExamples.map(r => r.id);
+  const hasExamples = examples.length > 0;
 
   const config = [
-    `Shot type: ${shotType}`,
-    `Camera movement: ${moves}`,
+    shot ? `Shot type: ${shot}` : '',
+    Array.isArray(cameraMove) && cameraMove.length ? `Camera movement: ${cameraMove.join(', ')}` : '',
     camera ? `Camera: ${camera}` : '',
     speed && speed !== 'Normal' ? `Speed: ${speed}` : '',
     luz ? `Lighting: ${luz}` : '',
     look ? `Look/Style: ${look}` : '',
     rules ? `Scene rules: ${rules}` : '',
     negative ? `Extra negative: ${negative}` : '',
-    `Aspect ratio: ${aspect || '16:9'}`,
-    `Resolution: 8K ultra resolution`,
+    aspect ? `Aspect ratio: ${aspect}` : '',
     Array.isArray(references) && references.length
-      ? `References: ${references.map((r, i) => r.label ? `@ref_${i+1} (${r.label})` : `@ref_${i+1}`).join(', ')}`
+      ? `References: ${references.map((r, i) => r.label ? `@video_${i+1} (${r.label})` : `@video_${i+1}`).join(', ')}`
       : '',
   ].filter(Boolean).join('\n');
 
-  const system = `You are an expert AI video generation prompt engineer specializing in cinematic video prompts for tools like Kling, Sora, and Runway.${examplesBlock}
+  let system;
+  if (hasExamples) {
+    const examplesBlock = `Validated video prompt library — real prompts that produced great results. Mirror them as closely as possible:\n\n${examples.map((e, i) => `[${i+1}]\n${e}`).join('\n\n')}`;
+    system = `You are an AI video prompt engineer. Your only job is to generate a new prompt that mirrors the structure, vocabulary, motion language, formatting, length, section order, and overall style of the reference prompts below.
+
+${examplesBlock}
+${SUBJECT_ISOLATION_RULE}
+
+${MEDIA_REFERENCE_RULE}
+
+${ANGLE_REINFORCEMENT_RULE}
+
+Rules:
+- Mirror the references exactly — same sections, same order, same punctuation style, same level of motion detail, same resolution conventions
+- Inherit resolution, camera language, quality descriptors and negative prompt style FROM the references — do not impose any external defaults
+- Use the user's scene and configuration, but only include the sections the references actually use
+- The [PROMPT_EN] section MUST always be in English, even if the references use other languages
+
+${DUAL_LANG_FORMAT}`;
+  } else {
+    system = `You are an expert AI video generation prompt engineer specializing in cinematic video prompts for tools like Kling, Sora, and Runway.
 
 Generate a single, complete, ready-to-use video generation prompt.
 
@@ -272,24 +471,28 @@ The prompt MUST follow this exact structure:
 "[Shot type], [camera movement], [camera] camera, 8K resolution, [aspect] aspect ratio, [scene with vivid motion description]. [Reference info if any]. Lighting: [light type]. The visual style should follow: [look/grade]. Scene rules: [rules]. Final video quality: ultra resolution, 8K, photorealistic, smooth natural motion, high production value, cinematic depth, rich color grading, sharp focus. Negative prompt: [what to avoid]."
 
 Rules:
-- Write entirely in English
-- ${hasExamples ? 'Follow the style, structure, and vocabulary of the library examples above' : 'Use the video prompt structure above exactly'}
+- The [PROMPT_EN] section MUST always be in English
+- Use the video prompt structure above exactly
 - Incorporate all the user configuration naturally
-- Return ONLY the prompt — no explanations, no labels, no markdown
 - Include vivid motion descriptions: how subjects move, how the camera moves, how the environment reacts
 - Always use 8K resolution — never use 2K, 4K, or HD
-- End with "Negative prompt: [what to avoid]"`;
+- End with "Negative prompt: [what to avoid]"
 
-  const userMsg = `Generate a cinematic video prompt for this scene: "${scene || 'a cinematic scene'}"\n\nConfiguration:\n${config}\n\nReturn only the complete prompt.`;
+${DUAL_LANG_FORMAT}`;
+  }
+
+  const userMsg = `Generate a video prompt for this scene: "${scene || 'a cinematic scene'}"\n\nConfiguration:\n${config || '(no extra config — use only what fits the reference style)'}\n\nReturn the prompt in the required [PROMPT_EN] / [PROMPT_PT] format.`;
 
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 1536,
       system,
       messages: [{ role: 'user', content: userMsg }],
     });
-    res.json({ prompt: enforceResolution(response.content[0].text.trim()) });
+    const { promptEn, promptPt } = parseDualLang(response.content[0].text.trim());
+    const prompt = hasExamples ? promptEn : enforceResolution(promptEn);
+    res.json({ prompt, promptPt, usedExampleIds });
   } catch (err) {
     console.error('Generate video error:', err.message);
     res.status(500).json({ error: err.message });
@@ -571,44 +774,112 @@ app.get('/api/library', (req, res) => {
   res.json(loadLibrary());
 });
 
-app.post('/api/library', (req, res) => {
+app.post('/api/library', async (req, res) => {
   const { content, generator } = req.body || {};
   if (!content || !generator) return res.status(400).json({ error: 'content e generator obrigatórios' });
   const items = loadLibrary();
   const item = { id: newLibId(), content: String(content), generator: String(generator), createdAt: new Date().toISOString() };
   items.unshift(item);
   saveLibrary(items);
+  // Embeda em background (não bloqueia a resposta)
+  if (openai) {
+    embedText(item.content)
+      .then(vec => { const map = loadEmbeddings(); map[item.id] = vec; saveEmbeddings(map); })
+      .catch(e => console.error('[embed] add failed:', e.message));
+  }
   res.json(item);
 });
 
 app.delete('/api/library/:id', (req, res) => {
   const items = loadLibrary().filter(l => l.id !== req.params.id);
   saveLibrary(items);
+  const map = loadEmbeddings();
+  if (map[req.params.id]) { delete map[req.params.id]; saveEmbeddings(map); }
   res.json({ ok: true });
 });
 
+// Ajusta score (feedback do usuário) de N itens da biblioteca
+app.post('/api/library/score', (req, res) => {
+  const { ids, delta } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length || typeof delta !== 'number') {
+    return res.status(400).json({ error: 'ids[] e delta numérico obrigatórios' });
+  }
+  const items = loadLibrary();
+  const idSet = new Set(ids);
+  let touched = 0;
+  for (const it of items) {
+    if (idSet.has(it.id)) { it.score = (it.score || 0) + delta; touched++; }
+  }
+  if (touched) saveLibrary(items);
+  res.json({ touched });
+});
+
+// Retorna itens da biblioteca por IDs (pra mostrar quais exemplos o RAG usou)
+app.post('/api/library/lookup', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!ids.length) return res.json({ items: [] });
+  const idSet = new Set(ids);
+  const items = loadLibrary().filter(l => idSet.has(l.id));
+  res.json({ items });
+});
+
 // Migra itens vindos do localStorage antigo (idempotente — dedup por generator+content)
-app.post('/api/library/migrate', (req, res) => {
+app.post('/api/library/migrate', async (req, res) => {
   const incoming = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!incoming.length) return res.json({ added: 0 });
   const items = loadLibrary();
   const seen = new Set(items.map(i => `${i.generator}|${i.content}`));
-  let added = 0;
+  const added = [];
   for (const it of incoming) {
     if (!it?.content || !it?.generator) continue;
     const key = `${it.generator}|${it.content}`;
     if (seen.has(key)) continue;
-    items.push({
+    const entry = {
       id: it.id || newLibId(),
       content: String(it.content),
       generator: String(it.generator),
       createdAt: it.createdAt || new Date().toISOString(),
-    });
+    };
+    items.push(entry);
     seen.add(key);
-    added++;
+    added.push(entry);
   }
-  if (added) saveLibrary(items);
-  res.json({ added });
+  if (added.length) saveLibrary(items);
+
+  // Embeda os novos em batch (background — não bloqueia)
+  if (openai && added.length) {
+    (async () => {
+      try {
+        const resp = await openai.embeddings.create({ model: EMBED_MODEL, input: added.map(a => a.content) });
+        const map = loadEmbeddings();
+        resp.data.forEach((d, i) => { map[added[i].id] = d.embedding; });
+        saveEmbeddings(map);
+      } catch (e) { console.error('[embed] migrate failed:', e.message); }
+    })();
+  }
+
+  res.json({ added: added.length });
+});
+
+// Reindex: embeda todos os itens da biblioteca (uso pontual após bulk import)
+app.post('/api/library/reindex', async (req, res) => {
+  if (!openai) return res.status(400).json({ error: 'OPENAI_API_KEY ausente' });
+  const items = loadLibrary();
+  if (!items.length) return res.json({ embedded: 0, total: 0 });
+  try {
+    const map = {};
+    const BATCH = 64;
+    for (let i = 0; i < items.length; i += BATCH) {
+      const slice = items.slice(i, i + BATCH);
+      const resp = await openai.embeddings.create({ model: EMBED_MODEL, input: slice.map(s => s.content) });
+      resp.data.forEach((d, j) => { map[slice[j].id] = d.embedding; });
+    }
+    saveEmbeddings(map);
+    res.json({ embedded: items.length, total: items.length });
+  } catch (e) {
+    console.error('[embed] reindex failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.listen(3001, () => console.log('API server → http://localhost:3001'));

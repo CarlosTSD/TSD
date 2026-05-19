@@ -162,7 +162,7 @@ const SHOT_OPTS = [
   ["Low angle",         "poderoso, imponente"],
   ["High angle",        "olhando de cima"],
   ["Bird's eye",        "aéreo amplo"],
-  ["Overhead",          "vista de cima"],
+  ["Top-down (overhead)", "vista de cima, 90°"],
   ["Worm's eye",        "raso, de baixo pra cima"],
   ["From behind",       "costas do personagem"],
   ["Over the shoulder", "por cima do ombro"],
@@ -289,7 +289,7 @@ export default function KlingStudio() {
       const raw = scene.trim();
       const title = raw.length > 0 ? raw.slice(0, 80) + (raw.length > 80 ? '…' : '') : 'Novo prompt de vídeo';
 
-      let finalPrompt;
+      let finalPrompt, finalPromptPt = '', usedExampleIds = [];
       try {
         const res = await fetch('/api/generate-video', {
           method: 'POST',
@@ -303,6 +303,8 @@ export default function KlingStudio() {
         if (!res.ok) throw new Error('api_error');
         const data = await res.json();
         finalPrompt = data.prompt;
+        finalPromptPt = data.promptPt || '';
+        usedExampleIds = Array.isArray(data.usedExampleIds) ? data.usedExampleIds : [];
       } catch {
         finalPrompt = buildVideoPrompt({ scene: sceneEn, camera, shot, cameraMove, speed, luz, look: lookTags.join(', '), rules, negative, references, aspect });
       }
@@ -312,7 +314,7 @@ export default function KlingStudio() {
         id: sessionId, title, scene: raw, generator: 'kling',
         prompt: finalPrompt,
         createdAt: new Date().toISOString(),
-        messages: [{ id: 'p0', role: 'assistant', type: 'prompt', content: finalPrompt, createdAt: new Date().toISOString() }],
+        messages: [{ id: 'p0', role: 'assistant', type: 'prompt', content: finalPrompt, contentPt: finalPromptPt, usedExampleIds, createdAt: new Date().toISOString() }],
       };
       try {
         const saved = JSON.parse(localStorage.getItem('nb_sessions') || '[]');

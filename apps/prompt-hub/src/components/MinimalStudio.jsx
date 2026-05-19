@@ -265,7 +265,7 @@ export default function MinimalPromptStudioComposer() {
   const angleOpts = [
     ["Wide shot","ambiente geral"],["Medium shot","equilíbrio clássico"],["Close-up","rosto / produto"],
     ["Extreme close-up","detalhe extremo"],["Full shot","corpo inteiro"],["Two shot","dois personagens"],
-    ["Low angle","poderoso, imponente"],["High angle","olhando de cima"],["Overhead","vista de cima"],
+    ["Low angle","poderoso, imponente"],["High angle","olhando de cima"],["Top-down (overhead)","vista de cima, 90°"],
     ["Bird's eye","aéreo amplo"],["Worm's eye","raso, de baixo pra cima"],
     ["From behind","costas do personagem"],["Over the shoulder","por cima do ombro"],
     ["3/4 front","três-quartos"],["Side profile","perfil lateral"],
@@ -302,7 +302,7 @@ export default function MinimalPromptStudioComposer() {
       const raw     = scene.trim();
       const title   = raw.length > 0 ? raw.slice(0, 80) + (raw.length > 80 ? '…' : '') : 'Novo prompt';
 
-      let finalPrompt;
+      let finalPrompt, finalPromptPt = '', usedExampleIds = [];
       try {
         const res = await fetch('/api/generate', {
           method: 'POST',
@@ -317,6 +317,8 @@ export default function MinimalPromptStudioComposer() {
         if (!res.ok) throw new Error('api_error');
         const data = await res.json();
         finalPrompt = data.prompt;
+        finalPromptPt = data.promptPt || '';
+        usedExampleIds = Array.isArray(data.usedExampleIds) ? data.usedExampleIds : [];
       } catch {
         finalPrompt = buildPrompt({ scene: sceneEn, camera, lens, focalLength, aperture, angles, luz, look: lookTags.join(', '), rules, negative, references, aspect });
       }
@@ -326,7 +328,7 @@ export default function MinimalPromptStudioComposer() {
         id: sessionId, title, scene: raw, generator,
         prompt: finalPrompt,
         createdAt: new Date().toISOString(),
-        messages: [{ id: 'p0', role: 'assistant', type: 'prompt', content: finalPrompt, createdAt: new Date().toISOString() }],
+        messages: [{ id: 'p0', role: 'assistant', type: 'prompt', content: finalPrompt, contentPt: finalPromptPt, usedExampleIds, createdAt: new Date().toISOString() }],
       };
       try {
         const saved = JSON.parse(localStorage.getItem('nb_sessions') || '[]');

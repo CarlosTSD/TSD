@@ -14,27 +14,51 @@ function Icon({ name, className = "h-4 w-4" }) {
     edit:       (<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>),
     angle:      (<><path d="M4 18h16M6 18 18 6M18 6v7M18 6h-7"/></>),
     chevron_down:(<><path d="M6 9l6 6 6-6"/></>),
+    book:       (<><path d="M4 4h11a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M4 4v16"/></>),
+    thumb_up:   (<><path d="M7 22V11M2 13v7a2 2 0 0 0 2 2h12.6a2 2 0 0 0 2-1.5l1.4-7A2 2 0 0 0 18 11h-5l1-5a2 2 0 0 0-2-2h-1L7 11"/></>),
+    thumb_down: (<><path d="M17 2v11M22 11V4a2 2 0 0 0-2-2H7.4a2 2 0 0 0-2 1.5L4 10.5A2 2 0 0 0 6 13h5l-1 5a2 2 0 0 0 2 2h1l4-7"/></>),
   };
   return <svg {...p}>{d[name]}</svg>;
 }
 
-const ANGLE_OPTS = [
-  ["Wide shot",        "ambiente geral"],
-  ["Medium shot",      "equilíbrio clássico"],
-  ["Close-up",         "rosto / produto"],
-  ["Extreme close-up", "detalhe extremo"],
-  ["Full shot",        "corpo inteiro"],
-  ["Low angle",        "poderoso, imponente"],
-  ["High angle",       "olhando de cima"],
-  ["Bird's eye",       "aéreo amplo"],
-  ["Worm's eye",       "raso, de baixo pra cima"],
-  ["From behind",      "costas do personagem"],
-  ["Over the shoulder","por cima do ombro"],
-  ["3/4 front",        "três-quartos"],
-  ["Side profile",     "perfil lateral"],
-  ["Dutch angle",      "câmera inclinada"],
-  ["POV",              "ponto de vista"],
-  ["Two shot",         "dois personagens"],
+// Mantido em sincronia com angleOpts (MinimalStudio.jsx) e SHOT_OPTS (KlingStudio.jsx)
+const NB_ANGLE_OPTS = [
+  ["Wide shot",          "ambiente geral"],
+  ["Medium shot",        "equilíbrio clássico"],
+  ["Close-up",           "rosto / produto"],
+  ["Extreme close-up",   "detalhe extremo"],
+  ["Full shot",          "corpo inteiro"],
+  ["Two shot",           "dois personagens"],
+  ["Low angle",          "poderoso, imponente"],
+  ["High angle",         "olhando de cima"],
+  ["Top-down (overhead)", "vista de cima, 90°"],
+  ["Bird's eye",         "aéreo amplo"],
+  ["Worm's eye",         "raso, de baixo pra cima"],
+  ["From behind",        "costas do personagem"],
+  ["Over the shoulder",  "por cima do ombro"],
+  ["3/4 front",          "três-quartos"],
+  ["Side profile",       "perfil lateral"],
+  ["Dutch angle",        "câmera inclinada"],
+  ["POV",                "ponto de vista"],
+];
+
+const KLING_SHOT_OPTS = [
+  ["Wide shot",          "ambiente geral"],
+  ["Medium shot",        "equilíbrio clássico"],
+  ["Close-up",           "rosto / produto"],
+  ["Extreme close-up",   "detalhe extremo"],
+  ["Full shot",          "corpo inteiro"],
+  ["Two shot",           "dois personagens"],
+  ["Low angle",          "poderoso, imponente"],
+  ["High angle",         "olhando de cima"],
+  ["Bird's eye",         "aéreo amplo"],
+  ["Top-down (overhead)", "vista de cima, 90°"],
+  ["Worm's eye",         "raso, de baixo pra cima"],
+  ["From behind",        "costas do personagem"],
+  ["Over the shoulder",  "por cima do ombro"],
+  ["3/4 front",          "três-quartos"],
+  ["Side profile",       "perfil lateral"],
+  ["POV",                "ponto de vista"],
 ];
 
 function formatPrompt(text) {
@@ -66,9 +90,58 @@ export default function PromptChat() {
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [variationOpenId, setVariationOpenId] = useState(null);
+  const [msgLang, setMsgLang] = useState({}); // { [msgId]: 'en' | 'pt' }
+  const [msgFeedback, setMsgFeedback] = useState({}); // { [msgId]: 'up' | 'down' | 'saved' }
+  const [refsOpenId, setRefsOpenId] = useState(null);
+  const [refsCache, setRefsCache] = useState({}); // { [msgId]: [{id, content, generator}] }
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const variationRef = useRef(null);
+
+  const getLang = (id) => msgLang[id] || 'en';
+  const getDisplayContent = (msg) => (getLang(msg.id) === 'pt' && msg.contentPt) ? msg.contentPt : msg.content;
+  const toggleLang = (msg) => { if (!msg.contentPt) return; setMsgLang(m => ({ ...m, [msg.id]: getLang(msg.id) === 'en' ? 'pt' : 'en' })); };
+
+  const fetchRefs = async (msg) => {
+    if (refsCache[msg.id] || !msg.usedExampleIds?.length) return;
+    try {
+      const res = await fetch('/api/library/lookup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: msg.usedExampleIds }),
+      });
+      const { items } = await res.json();
+      setRefsCache(c => ({ ...c, [msg.id]: items || [] }));
+    } catch {}
+  };
+  const toggleRefs = (msg) => {
+    setRefsOpenId(id => id === msg.id ? null : msg.id);
+    fetchRefs(msg);
+  };
+
+  const sendFeedback = async (msg, kind) => {
+    const ids = msg.usedExampleIds || [];
+    const delta = kind === 'up' ? 1 : -1;
+    try {
+      if (ids.length) {
+        await fetch('/api/library/score', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids, delta }),
+        });
+      }
+      // 👍: salva o prompt gerado na biblioteca (vira referência futura)
+      if (kind === 'up' && session?.generator) {
+        await fetch('/api/library', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: msg.content, generator: session.generator }),
+        });
+        setMsgFeedback(f => ({ ...f, [msg.id]: 'saved' }));
+      } else {
+        setMsgFeedback(f => ({ ...f, [msg.id]: kind }));
+      }
+    } catch (e) {
+      console.error('feedback error:', e);
+    }
+  };
 
   useEffect(() => {
     if (!variationOpenId) return;
@@ -93,12 +166,19 @@ export default function PromptChat() {
     try { await navigator.clipboard.writeText(applyFormat(text)); setCopied(key); setTimeout(() => setCopied(null), 1400); } catch {}
   };
 
-  const startEdit = (msg) => { setEditingId(msg.id); setEditText(msg.content); };
+  const startEdit = (msg) => { setEditingId(msg.id); setEditText(getDisplayContent(msg)); };
   const cancelEdit = () => { setEditingId(null); setEditText(''); };
   const saveEdit = (msg) => {
     const text = editText.trim();
-    if (!text || text === msg.content) { cancelEdit(); return; }
-    updateSession({ ...session, messages: session.messages.map(m => m.id === msg.id ? { ...m, content: text } : m) });
+    const lang = getLang(msg.id);
+    if (!text) { cancelEdit(); return; }
+    // Editou EN → salva em content e invalida PT (fica stale). Editou PT → salva só em contentPt.
+    const patch = lang === 'pt' ? { contentPt: text } : { content: text, contentPt: '' };
+    if (text === (lang === 'pt' ? msg.contentPt : msg.content)) { cancelEdit(); return; }
+    updateSession({
+      ...session,
+      messages: session.messages.map(m => m.id === msg.id ? { ...m, ...patch } : m),
+    });
     cancelEdit();
   };
 
@@ -125,8 +205,8 @@ export default function PromptChat() {
         body: JSON.stringify({ currentPrompt, history, userMessage: userMsg.content, generatorId: session.generator }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const { prompt, note } = await res.json();
-      const aiMsg = { id: `a-${Date.now()}`, role: 'assistant', type: 'refined', content: prompt, note: note || '', createdAt: new Date().toISOString() };
+      const { prompt, promptPt, note, usedExampleIds } = await res.json();
+      const aiMsg = { id: `a-${Date.now()}`, role: 'assistant', type: 'refined', content: prompt, contentPt: promptPt || '', note: note || '', usedExampleIds: usedExampleIds || [], createdAt: new Date().toISOString() };
       updateSession({ ...withUser, messages: [...withUser.messages, aiMsg] });
     } catch (err) {
       const errMsg = { id: `e-${Date.now()}`, role: 'assistant', type: 'refined', content: `Erro ao refinar o prompt: ${err.message}`, createdAt: new Date().toISOString() };
@@ -161,8 +241,8 @@ export default function PromptChat() {
         body: JSON.stringify({ currentPrompt, history, userMessage: userMsg.content, generatorId: session.generator }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const { prompt, note } = await res.json();
-      const aiMsg = { id: `a-${Date.now()}`, role: 'assistant', type: 'refined', content: prompt, note: note || '', createdAt: new Date().toISOString() };
+      const { prompt, promptPt, note, usedExampleIds } = await res.json();
+      const aiMsg = { id: `a-${Date.now()}`, role: 'assistant', type: 'refined', content: prompt, contentPt: promptPt || '', note: note || '', usedExampleIds: usedExampleIds || [], createdAt: new Date().toISOString() };
       updateSession({ ...withUser, messages: [...withUser.messages, aiMsg] });
     } catch (err) {
       const errMsg = { id: `e-${Date.now()}`, role: 'assistant', type: 'refined', content: `Erro ao gerar variação: ${err.message}`, createdAt: new Date().toISOString() };
@@ -301,13 +381,57 @@ export default function PromptChat() {
                         <p className="text-xs leading-relaxed text-white/50">{msg.note}</p>
                       </div>
                     )}
-                    <p className="whitespace-pre-line text-sm leading-7 text-white/68">{applyFormat(msg.content)}</p>
+                    <p className="whitespace-pre-line text-sm leading-7 text-white/68">{applyFormat(getDisplayContent(msg))}</p>
+
+                    {/* Inspirado em N exemplos — clica pra ver quais */}
+                    {msg.usedExampleIds?.length > 0 && (
+                      <div className="mt-4">
+                        <button
+                          onClick={() => toggleRefs(msg)}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-white/8 bg-white/[.03] px-3 py-1.5 text-[11px] font-medium text-white/50 transition hover:text-white"
+                        >
+                          <Icon name="book" className="h-3 w-3" />
+                          Inspirado em {msg.usedExampleIds.length} exempl{msg.usedExampleIds.length === 1 ? 'o' : 'os'} da biblioteca
+                          <Icon name="chevron_down" className={cn("h-2.5 w-2.5 transition-transform", refsOpenId === msg.id && "rotate-180")} />
+                        </button>
+                        {refsOpenId === msg.id && (
+                          <div className="mt-2 space-y-2">
+                            {(refsCache[msg.id] || []).map((ref, i) => (
+                              <div key={ref.id} className="rounded-xl border bg-white/[.02] px-3 py-2"
+                                style={{ borderColor: `rgba(${gen.rgb},.10)` }}>
+                                <p className="mb-1 text-[10px] font-semibold tracking-wide" style={{ color: `rgba(${gen.rgb},.6)` }}>
+                                  Referência [{i + 1}]
+                                </p>
+                                <p className="line-clamp-3 text-[11px] leading-relaxed text-white/45">{ref.content}</p>
+                              </div>
+                            ))}
+                            {!refsCache[msg.id] && (
+                              <p className="text-[10px] text-white/30">Carregando referências…</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <button onClick={() => copyText(msg.content, msg.id)}
+                      <button onClick={() => copyText(getDisplayContent(msg), msg.id)}
                         className="inline-flex items-center gap-1.5 rounded-full border border-white/8 bg-white/[.04] px-3 py-1.5 text-xs font-medium text-white/45 transition hover:text-white">
                         <Icon name="copy" className="h-3 w-3" />
                         {copied === msg.id ? 'Copied ✓' : 'Copy'}
                       </button>
+                      {msg.contentPt && (
+                        <button onClick={() => toggleLang(msg)} title={getLang(msg.id) === 'en' ? 'Mostrar versão PT' : 'Mostrar versão EN'}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                            getLang(msg.id) === 'pt'
+                              ? "border-white/16 bg-white/[.08] text-white/85"
+                              : "border-white/8 bg-white/[.04] text-white/45 hover:text-white"
+                          )}>
+                          <span className={cn(getLang(msg.id) === 'en' ? 'text-white/85' : 'text-white/40')}>EN</span>
+                          <span className="text-white/25">/</span>
+                          <span className={cn(getLang(msg.id) === 'pt' ? 'text-white/85' : 'text-white/40')}>PT</span>
+                        </button>
+                      )}
                       <button onClick={() => startEdit(msg)}
                         className="inline-flex items-center gap-1.5 rounded-full border border-white/8 bg-white/[.04] px-3 py-1.5 text-xs font-medium text-white/45 transition hover:text-white">
                         <Icon name="edit" className="h-3 w-3" /> Edit
@@ -319,33 +443,88 @@ export default function PromptChat() {
                           className={cn(
                             "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
                             variationOpenId === msg.id
-                              ? "border-white/16 bg-white/[.08] text-white/80"
+                              ? "text-white/85"
                               : "border-white/8 bg-white/[.04] text-white/45 hover:text-white"
                           )}
+                          style={variationOpenId === msg.id ? {
+                            borderColor: `rgba(${gen.rgb},.28)`,
+                            background: `rgba(${gen.rgb},.10)`,
+                          } : undefined}
                         >
                           <Icon name="angle" className="h-3 w-3" />
                           Variation
                           <Icon name="chevron_down" className={cn("h-2.5 w-2.5 transition-transform", variationOpenId === msg.id && "rotate-180")} />
                         </button>
                         {variationOpenId === msg.id && (
-                          <div className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-2xl border border-white/10 bg-[#0d111e]/96 shadow-[0_12px_40px_rgba(0,0,0,.7)] backdrop-blur-2xl">
-                            <div className="border-b border-white/8 px-4 py-3">
-                              <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-white/35">Shot Angle Variation</p>
+                          <div
+                            className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-2xl border backdrop-blur-2xl"
+                            style={{
+                              borderColor: gen.borderAccent,
+                              background: `linear-gradient(to bottom right, ${gen.bgFrom}, rgba(7,9,15,.92))`,
+                              boxShadow: `inset 0 1px 0 rgba(255,255,255,.05), 0 18px 50px ${gen.boxShadow}, 0 0 0 1px rgba(${gen.rgb},.04)`,
+                            }}
+                          >
+                            <div className="border-b px-4 py-3" style={{ borderColor: `rgba(${gen.rgb},.10)` }}>
+                              <p className="text-[10px] font-semibold uppercase tracking-[.16em]" style={{ color: gen.accent, opacity: .7 }}>
+                                Shot Angle Variation
+                              </p>
                             </div>
-                            <div className="grid grid-cols-2 gap-px bg-white/5 max-h-72 overflow-y-auto">
-                              {ANGLE_OPTS.map(([name, sub]) => (
+                            <div
+                              className="grid grid-cols-2 max-h-72 overflow-y-auto"
+                              style={{ gap: 1, background: `rgba(${gen.rgb},.06)` }}
+                            >
+                              {(session.generator === 'kling' ? KLING_SHOT_OPTS : NB_ANGLE_OPTS).map(([name, sub]) => (
                                 <button
                                   key={name}
                                   onClick={() => sendVariation(msg, name)}
-                                  className="flex flex-col gap-0.5 bg-[#0d111e] px-3.5 py-3 text-left transition hover:bg-white/[.05]"
+                                  className="flex flex-col gap-0.5 px-3.5 py-3 text-left transition"
+                                  style={{ background: gen.dark }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = `rgba(${gen.rgb},.10)`; }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = gen.dark; }}
                                 >
-                                  <span className="text-xs font-medium text-white/75">{name}</span>
-                                  <span className="text-[10px] text-white/28">{sub}</span>
+                                  <span className="text-xs font-medium text-white/80">{name}</span>
+                                  <span className="text-[10px] text-white/35">{sub}</span>
                                 </button>
                               ))}
                             </div>
                           </div>
                         )}
+                      </div>
+
+                      {/* Feedback 👍/👎 — empurrado pra direita */}
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          onClick={() => sendFeedback(msg, 'up')}
+                          disabled={msgFeedback[msg.id] === 'saved'}
+                          title={msgFeedback[msg.id] === 'saved' ? 'Salvo na biblioteca' : 'Funcionou — salvar como referência'}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition",
+                            msgFeedback[msg.id] === 'saved'
+                              ? "cursor-default"
+                              : "border-white/8 bg-white/[.04] text-white/45 hover:text-white"
+                          )}
+                          style={msgFeedback[msg.id] === 'saved' ? {
+                            borderColor: `rgba(${gen.rgb},.35)`,
+                            background: `rgba(${gen.rgb},.12)`,
+                            color: gen.accent,
+                          } : undefined}
+                        >
+                          <Icon name="thumb_up" className="h-3 w-3" />
+                          {msgFeedback[msg.id] === 'saved' ? 'Salvo ✓' : 'Funcionou'}
+                        </button>
+                        <button
+                          onClick={() => sendFeedback(msg, 'down')}
+                          disabled={msgFeedback[msg.id] === 'down'}
+                          title="Não funcionou — penalizar essas referências"
+                          className={cn(
+                            "inline-flex items-center justify-center rounded-full border h-8 w-8 transition",
+                            msgFeedback[msg.id] === 'down'
+                              ? "border-red-500/30 bg-red-500/10 text-red-400/80 cursor-default"
+                              : "border-white/8 bg-white/[.04] text-white/45 hover:text-white"
+                          )}
+                        >
+                          <Icon name="thumb_down" className="h-3 w-3" />
+                        </button>
                       </div>
                     </div>
                   </>
