@@ -17,6 +17,9 @@ function Icon({ name, className = "h-4 w-4" }) {
     book:       (<><path d="M4 4h11a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M4 4v16"/></>),
     thumb_up:   (<><path d="M7 22V11M2 13v7a2 2 0 0 0 2 2h12.6a2 2 0 0 0 2-1.5l1.4-7A2 2 0 0 0 18 11h-5l1-5a2 2 0 0 0-2-2h-1L7 11"/></>),
     thumb_down: (<><path d="M17 2v11M22 11V4a2 2 0 0 0-2-2H7.4a2 2 0 0 0-2 1.5L4 10.5A2 2 0 0 0 6 13h5l-1 5a2 2 0 0 0 2 2h1l4-7"/></>),
+    paperclip:  (<><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></>),
+    x:          (<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>),
+    play:       (<><polygon points="6 4 20 12 6 20 6 4"/></>),
   };
   return <svg {...p}>{d[name]}</svg>;
 }
@@ -94,12 +97,103 @@ export default function PromptChat() {
   const [msgFeedback, setMsgFeedback] = useState({}); // { [msgId]: 'up' | 'down' | 'saved' }
   const [refsOpenId, setRefsOpenId] = useState(null);
   const [refsCache, setRefsCache] = useState({}); // { [msgId]: [{id, content, generator}] }
+  const [pendingAttachments, setPendingAttachments] = useState([]); // [{id, type, dataUrl, name, label, frames?, processing?}]
+  const [attachError, setAttachError] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const variationRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const MAX_ATTACH_BYTES = 25 * 1024 * 1024; // 25 MB por arquivo
+
+  const readAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+
+  const handleAttachFiles = async (fileList) => {
+    setAttachError('');
+    const files = Array.from(fileList || []);
+    for (const f of files) {
+      if (f.size > MAX_ATTACH_BYTES) {
+        setAttachError(`"${f.name}" excede 25 MB`);
+        continue;
+      }
+      const isImage = f.type.startsWith('image/');
+      const isVideo = f.type.startsWith('video/');
+      if (!isImage && !isVideo) {
+        setAttachError(`"${f.name}" não é imagem nem vídeo`);
+        continue;
+      }
+      const id = `at-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const dataUrl = await readAsDataUrl(f);
+      const item = { id, type: isImage ? 'image' : 'video', dataUrl, name: f.name, label: '', processing: isVideo };
+      setPendingAttachments(prev => [...prev, item]);
+      if (isVideo) {
+        try {
+          const res = await fetch('/api/extract-frames', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl }),
+          });
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          const { frames } = await res.json();
+          setPendingAttachments(prev => prev.map(p => p.id === id ? { ...p, frames, processing: false } : p));
+        } catch (e) {
+          setPendingAttachments(prev => prev.map(p => p.id === id ? { ...p, processing: false, error: e.message } : p));
+          setAttachError(`Falha ao extrair frames de "${f.name}": ${e.message}`);
+        }
+      }
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const removeAttachment = (id) => setPendingAttachments(prev => prev.filter(p => p.id !== id));
+  const updateAttachmentLabel = (id, label) => setPendingAttachments(prev => prev.map(p => p.id === id ? { ...p, label } : p));
+
+  const handlePaste = (e) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const files = items.filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean);
+    if (files.length === 0) return;
+    e.preventDefault();
+    handleAttachFiles(files);
+  };
+
+  const handleDragEnter = (e) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+    e.preventDefault();
+    dragCounter.current++;
+    setIsDragging(true);
+  };
+  const handleDragLeave = (e) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+    e.preventDefault();
+    dragCounter.current = Math.max(0, dragCounter.current - 1);
+    if (dragCounter.current === 0) setIsDragging(false);
+  };
+  const handleDragOver = (e) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+    e.preventDefault();
+  };
+  const handleDrop = (e) => {
+    if (!Array.from(e.dataTransfer?.types || []).includes('Files')) return;
+    e.preventDefault();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) handleAttachFiles(files);
+  };
 
   const getLang = (id) => msgLang[id] || 'en';
-  const getDisplayContent = (msg) => (getLang(msg.id) === 'pt' && msg.contentPt) ? msg.contentPt : msg.content;
+  const getDisplayContent = (msg) => {
+    const lang = getLang(msg.id);
+    if (lang === 'pt' && msg.contentPt) return msg.contentPt;
+    if (msg.content) return msg.content;
+    return msg.contentPt || ''; // fallback se o EN veio vazio do parser
+  };
   const toggleLang = (msg) => { if (!msg.contentPt) return; setMsgLang(m => ({ ...m, [msg.id]: getLang(msg.id) === 'en' ? 'pt' : 'en' })); };
 
   const fetchRefs = async (msg) => {
@@ -183,13 +277,27 @@ export default function PromptChat() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || loading || !session) return;
-    const userMsg = { id: `u-${Date.now()}`, role: 'user', content: input.trim(), createdAt: new Date().toISOString() };
+    if ((!input.trim() && pendingAttachments.length === 0) || loading || !session) return;
+    // Bloqueia enquanto vídeo ainda está extraindo frames
+    if (pendingAttachments.some(a => a.processing)) { setAttachError('Aguarde a extração de frames terminar'); return; }
+    if (!input.trim()) { setAttachError('Escreva uma mensagem junto com o anexo'); return; }
+
+    const readyAttachments = pendingAttachments
+      .filter(a => !a.error)
+      .map(a => ({ id: a.id, type: a.type, dataUrl: a.dataUrl, label: a.label || '', name: a.name, frames: a.frames || undefined }));
+
+    const userMsg = {
+      id: `u-${Date.now()}`, role: 'user', content: input.trim(),
+      attachments: readyAttachments.length ? readyAttachments : undefined,
+      createdAt: new Date().toISOString(),
+    };
     const lastPromptMsg = [...session.messages].reverse().find(m => m.type === 'prompt' || m.type === 'refined');
     const currentPrompt = lastPromptMsg?.content || '';
     const withUser = { ...session, messages: [...session.messages, userMsg] };
     updateSession(withUser);
     setInput('');
+    setPendingAttachments([]);
+    setAttachError('');
     setLoading(true);
 
     const history = [];
@@ -202,7 +310,11 @@ export default function PromptChat() {
       const res = await fetch('/api/refine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPrompt, history, userMessage: userMsg.content, generatorId: session.generator }),
+        body: JSON.stringify({
+          currentPrompt, history, userMessage: userMsg.content,
+          generatorId: session.generator,
+          attachments: readyAttachments,
+        }),
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const { prompt, promptPt, note, usedExampleIds } = await res.json();
@@ -276,7 +388,24 @@ export default function PromptChat() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[#08090d] text-white">
+    <div
+      className="relative min-h-screen bg-[#08090d] text-white"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+
+      {isDragging && (
+        <div className="pointer-events-none fixed inset-4 z-50 flex items-center justify-center rounded-3xl border-2 border-dashed backdrop-blur-md"
+          style={{ borderColor: gen.accent, background: `rgba(${gen.rgb},.08)` }}>
+          <div className="flex flex-col items-center gap-2 text-center">
+            <Icon name="paperclip" className="h-8 w-8" style={{ color: gen.accent }} />
+            <p className="text-sm font-medium" style={{ color: gen.accent }}>Solte a imagem ou vídeo aqui</p>
+            <p className="text-xs text-white/45">Vira anexo da próxima mensagem</p>
+          </div>
+        </div>
+      )}
 
       {/* Background */}
       <div className="pointer-events-none fixed inset-0 z-0">
@@ -335,7 +464,28 @@ export default function PromptChat() {
             <div key={msg.id} className="flex justify-end">
               <div className="max-w-[85%] md:max-w-[72%]">
                 <div className="rounded-2xl rounded-tr-sm border border-white/8 bg-white/[.06] px-4 py-3 backdrop-blur-sm">
-                  <p className="text-sm leading-relaxed text-white/80">{msg.content}</p>
+                  {msg.attachments?.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {msg.attachments.map((a, i) => (
+                        <div key={a.id || i} className="relative h-16 w-16 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                          {a.type === 'image' ? (
+                            <img src={a.dataUrl} alt={a.label || a.name || `@image_${i+1}`} className="h-full w-full object-cover" />
+                          ) : (
+                            <>
+                              <img src={a.frames?.[0]?.dataUrl} alt={a.label || a.name || `@video_${i+1}`} className="h-full w-full object-cover" />
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/35">
+                                <Icon name="play" className="h-5 w-5 text-white/85" />
+                              </div>
+                            </>
+                          )}
+                          <span className="absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1 py-[1px] text-center text-[8px] text-white/70">
+                            @{a.type === 'video' ? 'video' : 'image'}_{i+1}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {msg.content && <p className="text-sm leading-relaxed text-white/80">{msg.content}</p>}
                 </div>
                 <p className="mt-1.5 text-right text-[10px] text-white/20">
                   {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -560,22 +710,77 @@ export default function PromptChat() {
 
       {/* Bottom input */}
       <div className="fixed bottom-4 left-4 right-4 z-30 sm:left-[60px] sm:right-[60px] md:left-[150px] md:right-[150px] lg:left-[200px] lg:right-[200px]">
-        <div className="flex items-end gap-2 rounded-[22px] border p-2.5 pl-4 backdrop-blur-3xl" style={boxStyle}>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            placeholder="Faça uma alteração no prompt ou escreva algo…"
-            className="min-h-[38px] flex-1 resize-none bg-transparent py-2 text-sm leading-relaxed text-white/75 outline-none placeholder:text-white/22"
-            style={{ maxHeight: '120px' }}
-          />
-          <button type="button" onClick={sendMessage} disabled={!input.trim() || loading}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold transition hover:brightness-110 disabled:opacity-25 disabled:cursor-not-allowed"
-            style={{ background: gen.accent, color: gen.dark }}>
-            <Icon name="send" className="h-3.5 w-3.5" />
-          </button>
+        <div className="flex flex-col gap-2 rounded-[22px] border p-2.5 backdrop-blur-3xl" style={boxStyle}>
+          {pendingAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-1.5 pt-1">
+              {pendingAttachments.map((a, i) => (
+                <div key={a.id} className="relative h-16 w-16 overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                  {a.type === 'image' ? (
+                    <img src={a.dataUrl} alt={a.name} className="h-full w-full object-cover" />
+                  ) : a.frames?.[0] ? (
+                    <>
+                      <img src={a.frames[0].dataUrl} alt={a.name} className="h-full w-full object-cover" />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/35">
+                        <Icon name="play" className="h-5 w-5 text-white/85" />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[9px] text-white/40">
+                      {a.processing ? 'Extraindo…' : a.error ? 'Falhou' : 'Vídeo'}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.id)}
+                    className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-white/15 bg-black/85 text-white/75 transition hover:bg-black hover:text-white"
+                    title="Remover"
+                  >
+                    <Icon name="x" className="h-2.5 w-2.5" />
+                  </button>
+                  <span className="absolute bottom-0 left-0 right-0 truncate bg-black/55 px-1 py-[1px] text-center text-[8px] text-white/70">
+                    @{a.type === 'video' ? 'video' : 'image'}_{i+1}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {attachError && (
+            <p className="px-2 text-[10px] text-red-400/80">{attachError}</p>
+          )}
+          <div className="flex items-end gap-2 pl-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              className="hidden"
+              onChange={e => handleAttachFiles(e.target.files)}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Anexar imagem ou vídeo"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/8 bg-white/[.04] text-white/55 transition hover:text-white"
+            >
+              <Icon name="paperclip" className="h-3.5 w-3.5" />
+            </button>
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              rows={1}
+              placeholder="Faça uma alteração no prompt, cole (⌘V) ou arraste uma imagem…"
+              className="min-h-[38px] flex-1 resize-none bg-transparent py-2 text-sm leading-relaxed text-white/75 outline-none placeholder:text-white/22"
+              style={{ maxHeight: '120px' }}
+            />
+            <button type="button" onClick={sendMessage} disabled={(!input.trim() && pendingAttachments.length === 0) || loading || pendingAttachments.some(a => a.processing)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold transition hover:brightness-110 disabled:opacity-25 disabled:cursor-not-allowed"
+              style={{ background: gen.accent, color: gen.dark }}>
+              <Icon name="send" className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

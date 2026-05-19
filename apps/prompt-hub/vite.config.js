@@ -8,5 +8,9 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3001',
     },
+    watch: {
+      // Backend grava esses arquivos durante o uso; ignorar evita full reload da página
+      ignored: ['**/.library.json', '**/.library-embeddings.json', '**/.hf_session.json'],
+    },
   },
 })

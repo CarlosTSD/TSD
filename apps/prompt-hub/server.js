@@ -6,6 +6,12 @@ import 'dotenv/config';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpegPath from 'ffmpeg-static';
+
+const execFileP = promisify(execFile);
 
 const SESSION_FILE = path.resolve('.hf_session.json');
 function saveSession() {
@@ -17,7 +23,7 @@ function loadSession() {
 
 const app = express();
 app.use(cors({ origin: 'http://localhost:5173' }));
-app.use(express.json({ limit: '25mb' })); // base64 de imagens de referência
+app.use(express.json({ limit: '60mb' })); // base64 de imagens/vídeos de referência
 
 const client = new Anthropic();
 const openai = process.env.OPENAI_API_KEY ? new OpenAI() : null;
@@ -123,19 +129,113 @@ function parseDualLang(raw) {
   let promptEn = enMatch ? enMatch[1].trim() : '';
   let promptPt = ptMatch ? ptMatch[1].trim() : '';
   const note = chMatch ? chMatch[1].trim() : '';
-  // Fallback: formato antigo (só [PROMPT]) ou sem marcadores
+  // Fallback 1: formato antigo (só [PROMPT]) ou sem marcadores
   if (!promptEn && !promptPt) {
     promptEn = raw.replace(/\[PROMPT\]/i, '').replace(/\[CHANGES\][\s\S]*$/i, '').trim();
   }
+  // Fallback 2: veio só PT (sem [PROMPT_EN]) — usa PT como EN pra UI não ficar vazia
+  if (!promptEn && promptPt) {
+    promptEn = promptPt;
+  }
+  // Sinaliza pro caller logar se o parse ficou suspeito
+  if (!promptEn && !promptPt) {
+    console.warn('[parseDualLang] resposta sem prompt — raw (1k):', raw.slice(0, 1000));
+  }
   return { promptEn, promptPt, note };
 }
+
+// ── Vídeo → 3 frames (1º / meio / último) via ffmpeg-static ──
+async function probeDuration(inputPath) {
+  try {
+    await execFileP(ffmpegPath, ['-hide_banner', '-i', inputPath]);
+    return null;
+  } catch (e) {
+    const m = String(e.stderr || '').match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  }
+}
+
+async function extractVideoFrames(videoBuffer, mimeType) {
+  const ext = ((mimeType || '').split('/')[1] || 'mp4').replace(/[^a-z0-9]/gi, '') || 'mp4';
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-vid-'));
+  const input = path.join(tmpDir, `in.${ext}`);
+  fs.writeFileSync(input, videoBuffer);
+  try {
+    const dur = await probeDuration(input);
+    const stamps = (dur && Number.isFinite(dur) && dur > 0.5)
+      ? [0, dur / 2, Math.max(0, dur - 0.1)]
+      : [0];
+    const frames = [];
+    for (let i = 0; i < stamps.length; i++) {
+      const out = path.join(tmpDir, `f${i}.jpg`);
+      await execFileP(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-ss', String(stamps[i]),
+        '-i', input,
+        '-frames:v', '1',
+        '-q:v', '4',
+        '-vf', 'scale=min(1280\\,iw):-2',
+        out,
+      ]);
+      const data = fs.readFileSync(out);
+      frames.push({ dataUrl: `data:image/jpeg;base64,${data.toString('base64')}` });
+    }
+    return frames;
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// Converte attachments do chat em content blocks multimodais pro Claude
+function attachmentsToContentBlocks(attachments = []) {
+  const blocks = [];
+  attachments.forEach((a, i) => {
+    const tag = a.type === 'video' ? `@video_${i + 1}` : `@image_${i + 1}`;
+    const labelSuffix = a.label ? ` (${a.label})` : '';
+    if (a.type === 'image' && a.dataUrl) {
+      const m = a.dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
+      if (!m) return;
+      blocks.push({ type: 'text', text: `[Chat attachment ${tag}${labelSuffix}]` });
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+    } else if (a.type === 'video' && Array.isArray(a.frames) && a.frames.length) {
+      blocks.push({ type: 'text', text: `[Chat attachment ${tag}${labelSuffix} — ${a.frames.length} frame(s) extraído(s)]` });
+      for (const f of a.frames) {
+        const m = f.dataUrl?.match(/^data:([^;,]+);base64,(.*)$/);
+        if (m) blocks.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+      }
+    }
+  });
+  return blocks;
+}
+
+app.post('/api/extract-frames', async (req, res) => {
+  try {
+    const { dataUrl } = req.body || {};
+    if (!dataUrl || typeof dataUrl !== 'string') return res.status(400).json({ error: 'dataUrl obrigatório' });
+    const m = dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
+    if (!m) return res.status(400).json({ error: 'dataUrl base64 inválido' });
+    const buf = Buffer.from(m[2], 'base64');
+    const frames = await extractVideoFrames(buf, m[1]);
+    res.json({ frames });
+  } catch (e) {
+    console.error('[extract-frames]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 const DUAL_LANG_FORMAT = `Respond in this exact format — English version FIRST, then Brazilian Portuguese translation:
 [PROMPT_EN]
 The complete prompt in English. This is the primary output and MUST always be in English, regardless of the language used in the reference examples or in the user's input.
 
 [PROMPT_PT]
-A faithful translation of the prompt above into Brazilian Portuguese. Keep technical terms (camera names, lens names, aperture values, aspect ratios, "8K", etc.) untranslated. Translate descriptive prose naturally.`;
+A faithful translation of the prompt above into Brazilian Portuguese. Keep technical terms (camera names, lens names, aperture values, aspect ratios, "8K", etc.) untranslated. Translate descriptive prose naturally.
+
+ABSOLUTELY MANDATORY:
+- Both [PROMPT_EN] and [PROMPT_PT] sections MUST be present and MUST contain the FULL prompt text.
+- NEVER omit [PROMPT_EN] — even if the change is small or the prompt is already mostly correct, ALWAYS reproduce the entire updated prompt under [PROMPT_EN].
+- NEVER output only [CHANGES] without the [PROMPT_EN] / [PROMPT_PT] sections.
+- NEVER write things like "the prompt is unchanged" or "see above" — always restate the full prompt.`;
 
 const DUAL_LANG_FORMAT_WITH_CHANGES = `${DUAL_LANG_FORMAT}
 
@@ -193,10 +293,13 @@ Rules:
 - Keep motion descriptions vivid and specific`;
 
 app.post('/api/refine', async (req, res) => {
-  const { currentPrompt, history, userMessage, generatorId } = req.body;
+  const { currentPrompt, history, userMessage, generatorId, attachments } = req.body;
   if (!currentPrompt || !userMessage) {
     return res.status(400).json({ error: 'Missing currentPrompt or userMessage' });
   }
+
+  const attachmentBlocks = attachmentsToContentBlocks(Array.isArray(attachments) ? attachments : []);
+  const hasAttachments = attachmentBlocks.length > 0;
 
   // RAG: busca top-K exemplos relevantes (query = pedido do usuário + prompt atual)
   const relevant = await topKExamples({
@@ -239,12 +342,18 @@ ${DUAL_LANG_FORMAT_WITH_CHANGES}`;
       : SYSTEM_PROMPT;
   }
 
+  const attachmentInstruction = hasAttachments
+    ? `\n\nThe user attached ${attachmentBlocks.filter(b => b.type === 'image').length} reference image(s) in this turn. Analyze each one and incorporate what is relevant (composition, lighting, color palette, framing, mood, style cues) into the refined prompt. Use the @image_N / @video_N notation if you cite them, matching the order they appear.`
+    : '';
+
+  const userText = `Current prompt:\n"""\n${currentPrompt}\n"""\n\nUser request: "${userMessage}"${attachmentInstruction}`;
+  const lastUserContent = hasAttachments
+    ? [{ type: 'text', text: userText }, ...attachmentBlocks]
+    : userText;
+
   const messages = [
     ...(history || []),
-    {
-      role: 'user',
-      content: `Current prompt:\n"""\n${currentPrompt}\n"""\n\nUser request: "${userMessage}"`,
-    },
+    { role: 'user', content: lastUserContent },
   ];
 
   try {
