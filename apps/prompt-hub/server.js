@@ -22,7 +22,12 @@ function loadSession() {
 }
 
 const app = express();
-app.use(cors({ origin: 'http://localhost:5173' }));
+const PORT = Number(process.env.PORT) || 3001;
+const IS_PROD = process.env.NODE_ENV === 'production';
+// Em prod o frontend é servido pelo mesmo host (mesma origem), CORS desnecessário.
+// Em dev, Vite roda em :5173 e proxia /api → :3001 (mesma origem do ponto de vista do browser),
+// mas mantemos CORS aberto pra localhost por garantia.
+if (!IS_PROD) app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json({ limit: '60mb' })); // base64 de imagens/vídeos de referência
 
 const client = new Anthropic();
@@ -991,4 +996,16 @@ app.post('/api/library/reindex', async (req, res) => {
   }
 });
 
-app.listen(3001, () => console.log('API server → http://localhost:3001'));
+// Em produção, serve a UI buildada do Vite (apps/prompt-hub/dist) no mesmo host da API.
+if (IS_PROD) {
+  const distDir = path.resolve('dist');
+  if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+    // SPA fallback — qualquer rota não-API entrega index.html
+    app.get(/^\/(?!api\/).*/, (_, res) => res.sendFile(path.join(distDir, 'index.html')));
+  } else {
+    console.warn('[server] NODE_ENV=production mas dist/ não encontrado — rode `vite build` antes.');
+  }
+}
+
+app.listen(PORT, () => console.log(`API server → http://localhost:${PORT}${IS_PROD ? ' (servindo dist/)' : ''}`));

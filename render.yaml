@@ -1,0 +1,25 @@
+# Blueprint do Render — sobe o prompt-hub (UI + API Express) num único Web Service.
+# Como usar: no painel da Render → New → Blueprint → conectar este repo.
+# Depois adicionar as env vars marcadas como `sync: false` no painel do service.
+services:
+  - type: web
+    name: prompt-hub
+    runtime: node
+    plan: free
+    region: oregon
+    # Build no workspace npm (instala todas as deps + builda o frontend Vite)
+    buildCommand: npm ci && npm run build --workspace apps/prompt-hub
+    # Sobe o server.js do prompt-hub; em produção ele serve dist/ + a API
+    startCommand: node apps/prompt-hub/server.js
+    healthCheckPath: /api/library
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: '22.14'
+      # Configure no painel do Render (marcado sync:false → não vai pro git)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
